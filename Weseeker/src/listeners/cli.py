@@ -7,6 +7,13 @@ from loguru import logger
 
 from agent.runner import AgentResponse, AgentRunner
 
+'''
+- 这程序本质上是“单线程异步程序为主”
+- 不是传统那种多线程并发程序
+- 只有 input() 被显式丢到了一个工作线程里
+- await 不是“开线程”，而是“暂停这里，等结果回来再继续”
+'''
+
 
 def configure_stdio() -> None:
     for stream in (sys.stdin, sys.stdout, sys.stderr):
@@ -57,7 +64,7 @@ async def main() -> None:
     try:
         while True:
             try:
-                user_input = await asyncio.to_thread(input, "\n你: ")
+                user_input = await asyncio.to_thread(input, "\n你: ") # 把一个同步、阻塞的函数丢到线程里执行，然后在异步代码里 await 它的结果
             except EOFError:
                 print("输入流已结束，退出程序。")
                 break
@@ -68,7 +75,7 @@ async def main() -> None:
             if user_input.lower() in {"quit", "exit", "q", "退出"}:
                 print("再见。")
                 break
-            if user_input.lower() in {"clear", "清空"}:
+            if user_input.lower() in {"clear", "清空", "cls"}:
                 await runner.new_conversation()
                 print("会话已清空。")
                 continue

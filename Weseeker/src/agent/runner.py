@@ -42,7 +42,12 @@ class AgentRunner:
 
         result = await self._agent.ainvoke(
             {"messages": [HumanMessage(content=user_input)]},
-            config={"configurable": {"thread_id": self._thread_id}},
+            config={"configurable": {"thread_id": self._thread_id}}, 
+            # LangGraph/LangChain 语境里的“会话标识” 不是多线程的意思
+            # 通常它的用途是：
+            # - 标识同一个对话线程
+            # - 配合 checkpointer 做多轮状态持久化
+            # - 支持 interrupt()/resume() 恢复同一会话
         )
         return AgentResponse(
             reply=self._extract_reply(result),
@@ -81,7 +86,7 @@ class AgentRunner:
         tool_results_by_id: dict[str, ToolMessage] = {}
 
         for message in messages:
-            if isinstance(message, ToolMessage):
+            if isinstance(message, ToolMessage): # ToolMessage本身就是工具作用后产生的消息结果
                 tool_call_id = getattr(message, "tool_call_id", None)
                 if tool_call_id:
                     tool_results_by_id[tool_call_id] = message
@@ -91,7 +96,7 @@ class AgentRunner:
             if not isinstance(message, AIMessage):
                 continue
 
-            for tool_call in getattr(message, "tool_calls", []) or []:
+            for tool_call in getattr(message, "tool_calls", []) or []: # = for tool_call in tool_calls
                 tool_result = tool_results_by_id.get(tool_call.get("id", ""))
                 traces.append(
                     ToolTrace(
@@ -107,7 +112,7 @@ class AgentRunner:
         return traces
 
     @staticmethod
-    def _stringify_tool_result(tool_name: str, tool_message: ToolMessage | None) -> str:
+    def _stringify_tool_result(tool_name: str, tool_message: ToolMessage | None) -> str: # 负责把工具原始返回值变成“可展示字符串”
         if tool_message is None:
             return "<未捕获到工具返回结果>"
 
@@ -124,7 +129,7 @@ class AgentRunner:
         return text
 
     @staticmethod
-    def _extract_tool_text(tool_message: ToolMessage) -> str:
+    def _extract_tool_text(tool_message: ToolMessage) -> str: # 负责把 ToolMessage.content 统一转成字符串
         content = tool_message.content
         if isinstance(content, str):
             return content

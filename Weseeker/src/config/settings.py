@@ -31,7 +31,7 @@ class LLMSettings(BaseSettings):
     model: str = "qwen3.5-plus"
     api_key: str = ""
     api_base: str = "https://coding.dashscope.aliyuncs.com/v1"
-    temperature: float = 0.7
+    temperature: float = 0.3
     timeout: int = 60
 
 
