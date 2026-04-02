@@ -14,3 +14,9 @@
 /Weseeker/.env
 /Weseeker/tests/
 /Weseeker/docs/
+/Weseeker/mcp_server.out.log
+/Weseeker/mcp_server.err.log
+*.log
+*.egg-info/
+**/__pycache__/
+*.pyc

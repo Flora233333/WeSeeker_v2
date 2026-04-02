@@ -4,8 +4,8 @@ llm:
   provider: dashscope
   model: qwen3.5-plus
   api_key: ""
-  api_base: ""
-  temperature: 0.3
+  api_base: https://coding.dashscope.aliyuncs.com/v1
+  temperature: 0.7
   timeout: 60
 
 everything:
