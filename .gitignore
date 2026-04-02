@@ -1,0 +1,16 @@
+/*
+!/.gitignore
+!/README.md
+!/Weseeker/
+
+/Weseeker/*
+!/Weseeker/pyproject.toml
+!/Weseeker/settings.yaml
+!/Weseeker/src/
+!/Weseeker/src/**
+!/Weseeker/scripts/
+!/Weseeker/scripts/**
+
+/Weseeker/.env
+/Weseeker/tests/
+/Weseeker/docs/

@@ -1,0 +1,52 @@
+debug: false
+
+llm:
+  provider: dashscope
+  model: qwen3.5-plus
+  api_key: ""
+  api_base: ""
+  temperature: 0.3
+  timeout: 60
+
+everything:
+  host: 127.0.0.1
+  port: 8080
+
+mcp:
+  file_tools_port: 9100
+  rag_tools_port: 9200
+
+preview:
+  text_depth_chars:
+    L1: 2000
+    L2: 5000
+    L3: 8000
+  excel_depth_rows:
+    L1: 10
+    L2: 50
+    L3: 100
+  pdf_depth_pages:
+    L1: 1
+    L2: 2
+    L3: 3
+  pdf_render_scale: 3.0
+
+paths:
+  desktop: ""
+  downloads: ""
+  documents: ""
+
+storage:
+  sqlite_path: storage/weseeker.db
+
+rag:
+  enabled: false
+  chroma_persist_dir: storage/chroma
+  embedding_provider: lmstudio
+  embedding_model: ""
+  embedding_dimension: 1024
+  chunk_size: 900
+  chunk_overlap: 150
+  top_k: 30
+
+sender_target: 文件传输助手
