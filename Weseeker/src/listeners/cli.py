@@ -7,13 +7,6 @@ from loguru import logger
 
 from agent.runner import AgentResponse, AgentRunner
 
-'''
-- 这程序本质上是“单线程异步程序为主”
-- 不是传统那种多线程并发程序
-- 只有 input() 被显式丢到了一个工作线程里
-- await 不是“开线程”，而是“暂停这里，等结果回来再继续”
-'''
-
 
 def configure_stdio() -> None:
     for stream in (sys.stdin, sys.stdout, sys.stderr):
@@ -54,6 +47,10 @@ def print_tool_trace(response: AgentResponse) -> None:
     print("-----")
 
 
+def print_interrupt_exit() -> None:
+    print("\n已中断，退出程序。")
+
+
 async def main() -> None:
     configure_stdio()
     print_welcome()
@@ -64,9 +61,12 @@ async def main() -> None:
     try:
         while True:
             try:
-                user_input = await asyncio.to_thread(input, "\n你: ") # 把一个同步、阻塞的函数丢到线程里执行，然后在异步代码里 await 它的结果
+                user_input = await asyncio.to_thread(input, "\n你: ")
             except EOFError:
                 print("输入流已结束，退出程序。")
+                break
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                print_interrupt_exit()
                 break
             user_input = user_input.strip()
 
@@ -88,7 +88,10 @@ async def main() -> None:
 
 
 def run() -> None:
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print_interrupt_exit()
 
 
 if __name__ == "__main__":

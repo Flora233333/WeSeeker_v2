@@ -5,7 +5,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from agent.factory import create_weseeker_agent
 
@@ -28,6 +28,7 @@ class AgentRunner:
         self._agent = None
         self._mcp_client = None
         self._thread_id = str(uuid.uuid4())
+        self._messages: list[BaseMessage] = []
 
     async def initialize(self) -> None:
         self._agent, self._mcp_client = await create_weseeker_agent()
@@ -40,22 +41,23 @@ class AgentRunner:
         if self._agent is None:
             raise RuntimeError("Agent 尚未初始化。")
 
+        current_messages = [*self._messages, HumanMessage(content=user_input)]
         result = await self._agent.ainvoke(
-            {"messages": [HumanMessage(content=user_input)]},
-            config={"configurable": {"thread_id": self._thread_id}}, 
-            # LangGraph/LangChain 语境里的“会话标识” 不是多线程的意思
-            # 通常它的用途是：
-            # - 标识同一个对话线程
-            # - 配合 checkpointer 做多轮状态持久化
-            # - 支持 interrupt()/resume() 恢复同一会话
+            {"messages": current_messages},
+            config={"configurable": {"thread_id": self._thread_id}},
         )
+        all_messages = self._extract_messages(result)
+        new_messages = self._extract_new_messages(self._messages, all_messages)
+        self._messages = all_messages
+
         return AgentResponse(
-            reply=self._extract_reply(result),
-            tool_traces=self._extract_tool_traces(result),
+            reply=self._extract_reply(new_messages),
+            tool_traces=self._extract_tool_traces(new_messages),
         )
 
     async def new_conversation(self) -> None:
         self._thread_id = str(uuid.uuid4())
+        self._messages = []
 
     async def cleanup(self) -> None:
         if self._mcp_client is not None:
@@ -69,8 +71,25 @@ class AgentRunner:
                     await result
 
     @staticmethod
-    def _extract_reply(result) -> str:
-        messages = result.get("messages", []) if isinstance(result, dict) else []
+    def _extract_messages(result: object) -> list[BaseMessage]:
+        if not isinstance(result, dict):
+            return []
+
+        messages = result.get("messages", [])
+        return [message for message in messages if isinstance(message, BaseMessage)]
+
+    @staticmethod
+    def _extract_new_messages(
+        previous_messages: list[BaseMessage],
+        all_messages: list[BaseMessage],
+    ) -> list[BaseMessage]:
+        previous_count = len(previous_messages)
+        if len(all_messages) < previous_count:
+            return all_messages
+        return all_messages[previous_count:]
+
+    @staticmethod
+    def _extract_reply(messages: list[BaseMessage]) -> str:
         ai_messages = [message for message in messages if isinstance(message, AIMessage)]
         if ai_messages:
             content = ai_messages[-1].content
@@ -81,12 +100,11 @@ class AgentRunner:
         return "抱歉，我暂时没有拿到有效结果。"
 
     @staticmethod
-    def _extract_tool_traces(result) -> list[ToolTrace]:
-        messages = result.get("messages", []) if isinstance(result, dict) else []
+    def _extract_tool_traces(messages: list[BaseMessage]) -> list[ToolTrace]:
         tool_results_by_id: dict[str, ToolMessage] = {}
 
         for message in messages:
-            if isinstance(message, ToolMessage): # ToolMessage本身就是工具作用后产生的消息结果
+            if isinstance(message, ToolMessage):
                 tool_call_id = getattr(message, "tool_call_id", None)
                 if tool_call_id:
                     tool_results_by_id[tool_call_id] = message
@@ -96,7 +114,7 @@ class AgentRunner:
             if not isinstance(message, AIMessage):
                 continue
 
-            for tool_call in getattr(message, "tool_calls", []) or []: # = for tool_call in tool_calls
+            for tool_call in getattr(message, "tool_calls", []) or []:
                 tool_result = tool_results_by_id.get(tool_call.get("id", ""))
                 traces.append(
                     ToolTrace(
@@ -112,7 +130,7 @@ class AgentRunner:
         return traces
 
     @staticmethod
-    def _stringify_tool_result(tool_name: str, tool_message: ToolMessage | None) -> str: # 负责把工具原始返回值变成“可展示字符串”
+    def _stringify_tool_result(tool_name: str, tool_message: ToolMessage | None) -> str:
         if tool_message is None:
             return "<未捕获到工具返回结果>"
 
@@ -129,7 +147,7 @@ class AgentRunner:
         return text
 
     @staticmethod
-    def _extract_tool_text(tool_message: ToolMessage) -> str: # 负责把 ToolMessage.content 统一转成字符串
+    def _extract_tool_text(tool_message: ToolMessage) -> str:
         content = tool_message.content
         if isinstance(content, str):
             return content
