@@ -35,7 +35,7 @@ dev = [
 ]
 
 [project.scripts]
-weseeker-agent = "weseeker.listeners.cli:run"
+weseeker-agent = "listeners.cli:run"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
