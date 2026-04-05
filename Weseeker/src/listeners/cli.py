@@ -29,10 +29,10 @@ WeSeeker MVP CLI
 
 
 def print_tool_trace(response: AgentResponse) -> None:
-    print("\n-----")
+    print("\n------------------------------")
     if not response.tool_traces:
         print("[Tool Trace] 本轮未触发工具调用")
-        print("-----")
+        print("------------------------------")
         return
 
     print("[Tool Trace]")
@@ -44,7 +44,7 @@ def print_tool_trace(response: AgentResponse) -> None:
             print(f"   result={preview_lines[0]}")
             for line in preview_lines[1:]:
                 print(f"          {line}")
-    print("-----")
+    print("------------------------------")
 
 
 def print_interrupt_exit() -> None:

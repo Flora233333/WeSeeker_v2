@@ -1,8 +1,8 @@
 # WeSeeker
 
-WeSeeker 是一个运行在 Windows PC 上的智能文件管家 Agent。用户通过自然语言描述文件需求，系统在本地完成文件搜索、目录展开、内容预览、知识库检索与安全发送。
+WeSeeker 是一个运行在 Windows PC 上的智能文件管家 Agent。用户通过自然语言描述文件需求，系统在本地完成文件搜索、内容预览、后续可扩展到知识库检索与安全发送。
 
-当前状态：开发中。
+当前状态：开发中，已完成文件搜索 / 文件预览 MVP 主链路。
 
 ## 项目目标
 
@@ -27,10 +27,10 @@ cd Weseeker
 pip install -e .[dev]
 ```
 
-## 计划中的常用命令
+## 常用命令
 
 ```bash
-# 启动全部 MCP Server
+# 启动文件工具 MCP Server
 python scripts/start_mcp_servers.py
 
 # 启动 CLI Agent
@@ -40,12 +40,19 @@ python scripts/run_agent.py
 pytest
 ```
 
+## 当前已可用能力
+
+- `search_files`：文件名搜索
+- `read_file_content`：文件内容与基础预览
+- CLI 调试入口：展示 `[Tool Trace]`
+
 ## 开发说明
 
-当前仓库已完成工程骨架初始化。
+当前仓库已从工程骨架进入 MVP 联调阶段。
 
-- `Weseeker/src/` 已建立模块占位
-- `Weseeker/scripts/` 已建立脚本占位
-- `Weseeker/tests/` 已建立测试目录占位，但默认不纳入版本控制
+- `scripts/start_mcp_servers.py` 会先探测 `9100` 端口；若目标 `file_tools` MCP 服务已在运行，会直接给出友好提示，不再抛出难看的端口绑定异常
+- `src/listeners/cli.py` 默认展示 `[Tool Trace]`，方便观察 Agent 是否真实触发工具调用
+- 调试前应先检查 MCP 端口是否已开启
+- 如果修改了 MCP 相关文件，应先关闭原有端口监听，再重新运行对应服务后继续调试
 
-后续将按技术大纲逐步填充最小可运行链路。
+后续将继续补自动化测试，并推进 `send_file`、HITL、RAG 等能力。

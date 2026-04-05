@@ -2,9 +2,9 @@ debug: false
 
 llm:
   provider: dashscope
-  model: qwen3.5-plus
+  model: moonshotai/Kimi-K2.5 # ZhipuAI/GLM-5
   api_key: ""
-  api_base: https://coding.dashscope.aliyuncs.com/v1
+  api_base: https://api-inference.modelscope.cn/v1
   temperature: 0.7
   timeout: 60
 

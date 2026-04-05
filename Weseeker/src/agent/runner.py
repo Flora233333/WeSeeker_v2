@@ -10,6 +10,10 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 from agent.factory import create_weseeker_agent
 
 
+green = "\033[92m"
+reset = "\033[0m"
+
+
 @dataclass
 class ToolTrace:
     tool_name: str
@@ -47,6 +51,13 @@ class AgentRunner:
             config={"configurable": {"thread_id": self._thread_id}},
         )
         all_messages = self._extract_messages(result)
+        
+        # print('------------------------------')
+        # print('all_messages:')
+        # for i, msg in enumerate(all_messages, 1):
+        #     print(f'[{i}] type={green}{type(msg).__name__}{reset}, msg={msg}')
+        # print('------------------------------')
+
         new_messages = self._extract_new_messages(self._messages, all_messages)
         self._messages = all_messages
 
@@ -140,6 +151,10 @@ class AgentRunner:
             summary = AgentRunner._summarize_search_result(text)
             if summary:
                 return summary
+        if tool_name == "read_file_content":
+            summary = AgentRunner._summarize_read_result(text)
+            if summary:
+                return summary
 
         text = text.replace("\r", " ").replace("\n", " ").strip()
         if len(text) > 240:
@@ -174,7 +189,11 @@ class AgentRunner:
             return None
 
         if not payload.get("ok"):
-            return f"搜索失败: {payload.get('error', '未知错误')}"
+            error_type = payload.get("error_type")
+            message = payload.get("message") or payload.get("user_hint") or payload.get("error") or "未知错误"
+            if error_type:
+                return f"搜索失败[{error_type}]: {message}"
+            return f"搜索失败: {message}"
 
         keyword = payload.get("keyword", "")
         path = payload.get("path") or "全局"
@@ -187,11 +206,58 @@ class AgentRunner:
                 continue
             name = item.get("name", "<unknown>")
             full_path = item.get("full_path") or item.get("path") or ""
+            size_display = item.get("size_display")
+            size = item.get("size")
             lines.append(f"- {name}")
             if full_path:
                 lines.append(f"  {full_path}")
+            if size_display:
+                lines.append(f"  size={size_display}")
+            elif size is not None:
+                lines.append(f"  size={size}")
 
         if count > 3:
             lines.append(f"- ... 还有 {count - 3} 项")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _summarize_read_result(text: str) -> str | None:
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+
+        if not payload.get("ok"):
+            error_type = payload.get("error_type")
+            message = payload.get("message") or payload.get("user_hint") or payload.get("error") or "未知错误"
+            if error_type:
+                return f"预览失败[{error_type}]: {message}"
+            return f"预览失败: {message}"
+
+        file_name = payload.get("file_name", "<unknown>")
+        file_type = payload.get("file_type", "<unknown>")
+        depth = payload.get("depth", "L1")
+        metadata = payload.get("metadata", {})
+        preview_text = str(payload.get("preview_text", "")).replace("\r", " ").replace("\n", " ").strip()
+
+        lines = [f"读取成功 | file={file_name} | type={file_type} | depth={depth}"]
+        if isinstance(metadata, dict):
+            size_display = metadata.get("size_display")
+            size = metadata.get("size")
+            modified = metadata.get("modified")
+            if size_display:
+                lines.append(f"- size={size_display}")
+            elif size is not None:
+                lines.append(f"- size={size}")
+            if modified:
+                lines.append(f"- modified={modified}")
+        if preview_text:
+            if len(preview_text) > 120:
+                preview_text = f"{preview_text[:120]}..."
+            lines.append(f"- preview={preview_text}")
 
         return "\n".join(lines)
