@@ -36,7 +36,11 @@ def print_tool_trace(response: AgentResponse) -> None:
         return
 
     print("[Tool Trace]")
+    current_round = 0
     for index, trace in enumerate(response.tool_traces, start=1):
+        if trace.round_index != current_round:
+            current_round = trace.round_index
+            print(f"[Round {current_round}]")
         print(f"{index}. tool={trace.tool_name}")
         print(f"   args={trace.args}")
         preview_lines = trace.result_preview.splitlines() or [trace.result_preview]

@@ -9,7 +9,6 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 
 from agent.factory import create_weseeker_agent
 
-
 green = "\033[92m"
 reset = "\033[0m"
 
@@ -19,6 +18,7 @@ class ToolTrace:
     tool_name: str
     args: dict[str, Any]
     result_preview: str
+    round_index: int = 0
 
 
 @dataclass
@@ -50,14 +50,8 @@ class AgentRunner:
             {"messages": current_messages},
             config={"configurable": {"thread_id": self._thread_id}},
         )
-        all_messages = self._extract_messages(result)
-        
-        # print('------------------------------')
-        # print('all_messages:')
-        # for i, msg in enumerate(all_messages, 1):
-        #     print(f'[{i}] type={green}{type(msg).__name__}{reset}, msg={msg}')
-        # print('------------------------------')
 
+        all_messages = self._extract_messages(result)
         new_messages = self._extract_new_messages(self._messages, all_messages)
         self._messages = all_messages
 
@@ -121,11 +115,17 @@ class AgentRunner:
                     tool_results_by_id[tool_call_id] = message
 
         traces: list[ToolTrace] = []
+        round_index = 0
         for message in messages:
             if not isinstance(message, AIMessage):
                 continue
 
-            for tool_call in getattr(message, "tool_calls", []) or []:
+            tool_calls = getattr(message, "tool_calls", []) or []
+            if not tool_calls:
+                continue
+
+            round_index += 1
+            for tool_call in tool_calls:
                 tool_result = tool_results_by_id.get(tool_call.get("id", ""))
                 traces.append(
                     ToolTrace(
@@ -135,6 +135,7 @@ class AgentRunner:
                             tool_call.get("name", "unknown"),
                             tool_result,
                         ),
+                        round_index=round_index,
                     )
                 )
 
@@ -153,6 +154,14 @@ class AgentRunner:
                 return summary
         if tool_name == "read_file_content":
             summary = AgentRunner._summarize_read_result(text)
+            if summary:
+                return summary
+        if tool_name == "list_folder_contents":
+            summary = AgentRunner._summarize_folder_result(text)
+            if summary:
+                return summary
+        if tool_name == "get_current_candidates":
+            summary = AgentRunner._summarize_current_candidates_result(text)
             if summary:
                 return summary
 
@@ -190,7 +199,12 @@ class AgentRunner:
 
         if not payload.get("ok"):
             error_type = payload.get("error_type")
-            message = payload.get("message") or payload.get("user_hint") or payload.get("error") or "未知错误"
+            message = (
+                payload.get("message")
+                or payload.get("user_hint")
+                or payload.get("error")
+                or "未知错误"
+            )
             if error_type:
                 return f"搜索失败[{error_type}]: {message}"
             return f"搜索失败: {message}"
@@ -233,7 +247,12 @@ class AgentRunner:
 
         if not payload.get("ok"):
             error_type = payload.get("error_type")
-            message = payload.get("message") or payload.get("user_hint") or payload.get("error") or "未知错误"
+            message = (
+                payload.get("message")
+                or payload.get("user_hint")
+                or payload.get("error")
+                or "未知错误"
+            )
             if error_type:
                 return f"预览失败[{error_type}]: {message}"
             return f"预览失败: {message}"
@@ -241,10 +260,18 @@ class AgentRunner:
         file_name = payload.get("file_name", "<unknown>")
         file_type = payload.get("file_type", "<unknown>")
         depth = payload.get("depth", "L1")
+        candidate_source = payload.get("candidate_source", "search_files")
         metadata = payload.get("metadata", {})
-        preview_text = str(payload.get("preview_text", "")).replace("\r", " ").replace("\n", " ").strip()
+        preview_text = str(payload.get("preview_text", ""))
+        preview_text = preview_text.replace("\r", " ").replace("\n", " ").strip()
 
-        lines = [f"读取成功 | file={file_name} | type={file_type} | depth={depth}"]
+        lines = [
+            (
+                "读取成功 | "
+                f"file={file_name} | type={file_type} | depth={depth} | "
+                f"source={candidate_source}"
+            )
+        ]
         if isinstance(metadata, dict):
             size_display = metadata.get("size_display")
             size = metadata.get("size")
@@ -260,4 +287,80 @@ class AgentRunner:
                 preview_text = f"{preview_text[:120]}..."
             lines.append(f"- preview={preview_text}")
 
+        return "\n".join(lines)
+
+    @staticmethod
+    def _summarize_folder_result(text: str) -> str | None:
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+        if not payload.get("ok"):
+            error_type = payload.get("error_type")
+            message = (
+                payload.get("message")
+                or payload.get("user_hint")
+                or payload.get("error")
+                or "未知错误"
+            )
+            if error_type:
+                return f"目录列出失败[{error_type}]: {message}"
+            return f"目录列出失败: {message}"
+
+        folder_name = payload.get("folder_name", "<unknown>")
+        folder_path = payload.get("folder_path", "")
+        candidate_source = payload.get("candidate_source", "search_files")
+        count = payload.get("count", 0)
+        results = payload.get("results", [])
+        lines = [
+            (
+                f"目录命中 {count} 项 | folder={folder_name} | "
+                f"source={candidate_source}"
+            )
+        ]
+        if folder_path:
+            lines.append(f"- path={folder_path}")
+        for item in results[:3]:
+            if not isinstance(item, dict):
+                continue
+            icon = "📁 " if item.get("is_dir") else ""
+            lines.append(f"- {icon}{item.get('name', '<unknown>')}")
+        if count > 3:
+            lines.append(f"- ... 还有 {count - 3} 项")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _summarize_current_candidates_result(text: str) -> str | None:
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            return None
+
+        sources = payload.get("sources", {})
+        if not isinstance(sources, dict):
+            return None
+
+        lines: list[str] = ["当前 candidates 快照"]
+        for source_name in ("search_files", "list_folder_contents"):
+            source_payload = sources.get(source_name, {})
+            if not isinstance(source_payload, dict):
+                continue
+            if not source_payload.get("has_candidates"):
+                lines.append(f"- {source_name}: empty")
+                continue
+            count = source_payload.get("count", 0)
+            query = source_payload.get("query")
+            path = source_payload.get("path")
+            head = f"- {source_name}: {count} 项"
+            if query:
+                head += f" | query={query}"
+            if path:
+                head += f" | path={path}"
+            lines.append(head)
         return "\n".join(lines)

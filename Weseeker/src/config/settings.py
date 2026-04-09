@@ -7,7 +7,6 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict, YamlConfigSettingsSource
 
-
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
 
@@ -29,10 +28,12 @@ def _read_dotenv_value(key: str) -> str:
 class LLMSettings(BaseSettings):
     provider: str = "dashscope"
     model: str = "qwen3.5-plus"
+    is_multimodal: bool = False
     api_key: str = ""
-    api_base: str = "https://coding.dashscope.aliyuncs.com/v1"
+    api_base: str = "https://api-inference.modelscope.cn/v1"
     temperature: float = 0.3
     timeout: int = 60
+    enable_thinking: str | None = None
 
 
 class EverythingSettings(BaseSettings):
@@ -50,6 +51,7 @@ class PreviewSettings(BaseSettings):
     excel_depth_rows: dict[str, int] = {"L1": 10, "L2": 50, "L3": 100}
     pdf_depth_pages: dict[str, int] = {"L1": 1, "L2": 2, "L3": 3}
     pdf_render_scale: float = 3.0
+    image_max_edge: int = 1600
 
 
 class PathsSettings(BaseSettings):
@@ -105,15 +107,17 @@ class AppSettings(BaseSettings):
             init_settings,
             env_settings,
             dotenv_settings,
-            YamlConfigSettingsSource(settings_cls, yaml_file=ROOT_DIR / "settings.yaml"),
+            YamlConfigSettingsSource(
+                settings_cls, yaml_file=ROOT_DIR / "settings.yaml", yaml_file_encoding="utf-8"
+            ),
             file_secret_settings,
         )
 
     def model_post_init(self, __context) -> None:
         if not self.llm.api_key:
-            self.llm.api_key = os.getenv("DASHSCOPE_API_KEY", "") or _read_dotenv_value(
-                "DASHSCOPE_API_KEY"
-            )
+            # 根据 provider 自动拼 key 名：provider="deepseek" → DEEPSEEK_API_KEY
+            env_key = f"{self.llm.provider.upper()}_API_KEY"
+            self.llm.api_key = os.getenv(env_key, "") or _read_dotenv_value(env_key)
 
 
 @lru_cache()

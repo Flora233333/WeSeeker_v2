@@ -4,8 +4,13 @@ import asyncio
 import json
 from pathlib import Path
 
-from mcp_servers.file_tools.utils.candidate_registry import get_candidate_by_index
+from mcp_servers.file_tools.utils.candidate_registry import (
+    get_candidate_by_index,
+    normalize_candidate_source,
+)
 from mcp_servers.file_tools.utils.file_extractors import (
+    PreviewGenerationError,
+    StructuredPreviewError,
     UnsupportedFileTypeError,
     extract_preview,
     normalize_depth,
@@ -20,6 +25,7 @@ async def execute_read_content(
     depth: str = "L1",
     *,
     client_id: str | None = None,
+    candidate_source: str = "search_files",
 ) -> str:
     try:
         normalized_depth = normalize_depth(depth)
@@ -27,6 +33,7 @@ async def execute_read_content(
             file_index=file_index,
             file_path=file_path,
             client_id=client_id,
+            candidate_source=candidate_source,
         )
     except ValueError as exc:
         return _map_argument_error(str(exc))
@@ -42,7 +49,7 @@ async def execute_read_content(
         return build_error_response(
             "directory_not_supported",
             "当前目标是文件夹，不支持内容预览。",
-            user_hint="当前目标是文件夹，请改为选择具体文件。",
+            user_hint="当前目标是文件夹，请改为使用 list_folder_contents 查看目录内容。",
             operator_hint="目录预览应改走 list_folder_contents，而不是 read_file_content。",
         )
     if not should_include_path(str(resolved_path)):
@@ -55,12 +62,28 @@ async def execute_read_content(
 
     try:
         preview = await asyncio.to_thread(extract_preview, resolved_path, normalized_depth)
+    except StructuredPreviewError as exc:
+        return build_error_response(
+            exc.error_type,
+            exc.message,
+            retryable=exc.retryable,
+            user_hint=exc.user_hint,
+            operator_hint=exc.operator_hint,
+        )
     except UnsupportedFileTypeError as exc:
         return build_error_response(
             "unsupported_file_type",
             str(exc),
             user_hint="当前文件类型暂不支持预览。",
             operator_hint="如需支持该格式，请在 file_extractors.py 中补对应 extractor。",
+        )
+    except PreviewGenerationError as exc:
+        return build_error_response(
+            "preview_failed",
+            f"生成预览失败：{exc}",
+            retryable=True,
+            user_hint="当前文件暂时无法生成预览，请稍后重试。",
+            operator_hint="请检查图片预览模型或视觉资产生成逻辑。",
         )
     except OSError as exc:
         return build_error_response(
@@ -75,6 +98,7 @@ async def execute_read_content(
         {
             "ok": True,
             "source": source,
+            "candidate_source": candidate_source,
             "file_name": resolved_path.name,
             "file_path": str(resolved_path),
             "file_type": preview.file_type,
@@ -91,12 +115,14 @@ def _resolve_target_path(
     file_index: int | None,
     file_path: str | None,
     client_id: str | None,
+    candidate_source: str,
 ) -> tuple[str, Path]:
     if file_index is None and not file_path:
         raise ValueError("必须提供 file_index 或 file_path。")
 
     if file_index is not None:
-        candidate = get_candidate_by_index(client_id, file_index)
+        normalized_source = normalize_candidate_source(candidate_source)
+        candidate = get_candidate_by_index(client_id, file_index, source=normalized_source)
         if candidate is None:
             raise ValueError("未找到对应的候选文件序号，请先重新搜索。")
         return "file_index", Path(candidate.full_path)
@@ -118,7 +144,7 @@ def _map_argument_error(message: str) -> str:
             "candidate_not_found",
             message,
             user_hint="当前候选序号无效，请先重新搜索再预览。",
-            operator_hint="candidate_registry 中未找到对应 client_id 的最近搜索结果。",
+            operator_hint="指定 source 下未找到对应 client_id 的最近候选结果。",
         )
     if message == "depth 仅支持 L1、L2、L3。":
         return build_error_response(
@@ -126,6 +152,13 @@ def _map_argument_error(message: str) -> str:
             message,
             user_hint="预览深度仅支持 L1、L2、L3。",
             operator_hint="调用 read_file_content 时请传入合法 depth。",
+        )
+    if message == "candidate_source 仅支持 search_files 或 list_folder_contents。":
+        return build_error_response(
+            "invalid_candidate_source",
+            message,
+            user_hint="候选来源仅支持 search_files 或 list_folder_contents。",
+            operator_hint="请传入合法 candidate_source。",
         )
 
     return build_error_response(
