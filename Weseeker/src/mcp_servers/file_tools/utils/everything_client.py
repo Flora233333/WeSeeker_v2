@@ -8,6 +8,7 @@ import httpx
 
 from config.settings import get_settings
 from mcp_servers.file_tools.utils.file_filter import should_include_path
+from mcp_servers.file_tools.utils.time_format import format_modified_value
 
 
 LOW_PRIORITY_NAME_PREFIXES = ("_", ".", "~$")
@@ -181,7 +182,7 @@ class EverythingClient:
                         name=name,
                         path=parent,
                         size=size,
-                        modified=str(item.get("date_modified") or ""),
+                        modified=format_modified_value(item.get("date_modified")),
                         is_dir=is_dir,
                     )
                 )

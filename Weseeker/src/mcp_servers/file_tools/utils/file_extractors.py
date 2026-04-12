@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from io import BytesIO
 from pathlib import Path
@@ -15,6 +14,7 @@ from pptx import Presentation
 from adapters.model_provider import summarize_visual_assets
 from config.settings import get_settings
 from loguru import logger
+from mcp_servers.file_tools.utils.time_format import format_modified_timestamp
 
 
 TEXT_FILE_SUFFIXES = {
@@ -153,7 +153,7 @@ def build_common_metadata(file_path: Path) -> dict[str, object]:
     return {
         "size": stat_result.st_size,
         "size_display": format_size_display(stat_result.st_size),
-        "modified": datetime.fromtimestamp(stat_result.st_mtime).isoformat(timespec="seconds"),
+        "modified": format_modified_timestamp(stat_result.st_mtime),
     }
 
 
