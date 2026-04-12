@@ -25,6 +25,7 @@ class ToolTrace:
 class AgentResponse:
     reply: str
     tool_traces: list[ToolTrace]
+    needs_confirmation: bool = False  # ← 新增
 
 
 class AgentRunner:
@@ -33,6 +34,7 @@ class AgentRunner:
         self._mcp_client = None
         self._thread_id = str(uuid.uuid4())
         self._messages: list[BaseMessage] = []
+        self._pending_send_token: str | None = None
 
     async def initialize(self) -> None:
         self._agent, self._mcp_client = await create_weseeker_agent()
@@ -55,9 +57,17 @@ class AgentRunner:
         new_messages = self._extract_new_messages(self._messages, all_messages)
         self._messages = all_messages
 
+        # ========== 新增：检测 prepare_send ==========
+        send_token = self._detect_prepare_send(all_messages)
+        if send_token:
+            self._pending_send_token = send_token
+        else:
+            self._pending_send_token = None
+
         return AgentResponse(
             reply=self._extract_reply(new_messages),
             tool_traces=self._extract_tool_traces(new_messages),
+            needs_confirmation=self._pending_send_token is not None,
         )
 
     async def new_conversation(self) -> None:
@@ -74,6 +84,24 @@ class AgentRunner:
                 result = close()
                 if hasattr(result, "__await__"):
                     await result
+
+    @staticmethod
+    def _detect_prepare_send(messages: list) -> str | None:
+        """检测当前轮最后一条 ToolMessage 是否为成功的 prepare_send。"""
+        for msg in reversed(messages):
+            if isinstance(msg, HumanMessage):
+                break
+            if isinstance(msg, ToolMessage):
+                if getattr(msg, "name", "") != "prepare_send":
+                    return None
+                try:
+                    data = json.loads(AgentRunner._extract_tool_text(msg))
+                    if isinstance(data, dict) and data.get("ok"):
+                        return data.get("send_token")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                break
+        return None
 
     @staticmethod
     def _extract_messages(result: object) -> list[BaseMessage]:

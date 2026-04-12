@@ -87,6 +87,11 @@ async def main() -> None:
             response = await runner.process_message_with_trace(user_input)
             print_tool_trace(response)
             print(f"\nWeSeeker: {response.reply}")
+
+            # 唯一的新增：如果 Agent 刚完成了 prepare_send，给用户一个提示
+            # 这只是视觉提示，不限制用户输入任何内容
+            if response.needs_confirmation:
+                print("\n💡 提示：请回复是否确认发送，或告诉我需要调整什么。")
     finally:
         await runner.cleanup()
 

@@ -9,6 +9,7 @@ from config.settings import get_settings
 from mcp_servers.file_tools.folder import execute_list_folder_contents
 from mcp_servers.file_tools.reader import execute_read_content
 from mcp_servers.file_tools.search import execute_get_current_candidates, execute_search
+from mcp_servers.file_tools.sender import execute_prepare_send, execute_confirm_send
 
 mcp = FastMCP(
     name="weseeker-file-tools",
@@ -298,6 +299,112 @@ async def read_file_content(
         depth=depth,
         client_id=client_id,
         candidate_source=candidate_source,
+    )
+
+
+@mcp.tool()
+async def prepare_send(
+    file_indices: list[int],
+    candidate_source: str = "search_files",
+    ctx: Context | None = None,
+) -> str:
+    """
+    准备发送文件：校验文件有效性，提取概览信息，生成发送令牌。
+
+    用途：
+    - 当用户要求发送一个或多个已搜索到的文件时
+    - 调用后必须向用户展示文件概览，等待用户明确确认后才能调用 confirm_send
+
+    使用方法：
+    - file_indices 必须来自当前有效的 candidates（search_files 或 list_folder_contents）
+    - 调用前必须确保 candidates 已存在且 file_index 有效
+    - 规则与 read_file_content 的 file_index 使用规则完全一致：先确认 source，再确认 index
+    - 收到成功结果后，必须基于返回的文件概览信息向用户展示待发送文件清单并等待确认
+    - 返回的 send_token 有有效期（5 分钟），过期需重新调用
+
+    Args:
+        file_indices: 要发送的文件在当前候选列表中的序号列表。支持一次指定多个文件。
+            序号必须来自当前有效的 candidates，不能凭记忆编造。
+        candidate_source: file_indices 所属的 candidates 来源。
+            支持：search_files、list_folder_contents。默认 search_files。
+
+    Returns:
+        JSON 字符串，成功时包含：
+        - ok: true
+        - send_token: 发送令牌，confirm_send 时使用，有效期 5 分钟
+        - file_count: 有效文件数量
+        - files: 文件概览列表，每项包含：
+          - name: 文件名
+          - full_path: 完整路径
+          - size: 文件大小（字节）
+          - size_display: 文件大小可读显示
+          - file_type: 文件类型
+          - preview_text: 内容预览文本
+        - errors: 无效文件的错误信息（如有）
+        - notice: 提醒必须先展示概览并获取用户确认
+
+        失败时返回结构化错误。
+
+    备注：
+    - 不能发送文件夹（目录），只能发送普通文件
+    - 受限路径下的文件不允许发送
+    - 如果部分文件无效，仍会为有效文件生成 token，同时返回 errors 说明无效原因
+    """
+    client_id = ctx.client_id if ctx is not None else None
+    return await execute_prepare_send(
+        file_indices=file_indices,
+        client_id=client_id,
+        candidate_source=candidate_source,
+    )
+
+
+@mcp.tool()
+async def confirm_send(
+    send_token: str,
+    ctx: Context | None = None,
+) -> str:
+    """
+    确认并执行文件发送。
+
+    用途：
+    - 仅在用户通过自然语言明确表达确认后调用
+    - 必须使用 prepare_send 返回的 send_token
+
+    使用方法：
+    - 只有在用户说出"确认""好的""发吧""yes""go"等明确确认词后才能调用
+    - 以下情况不算确认，不能调用本工具：
+      - 用户只是在讨论文件内容
+      - 用户说"让我想想""等一下""稍等"
+      - 用户没有回复
+      - 用户在问其他问题
+    - send_token 有效期为 5 分钟，过期后需重新调用 prepare_send
+    - 每个 send_token 只能使用一次，不可重复调用
+
+    Args:
+        send_token: prepare_send 返回的发送令牌。不能编造，必须使用真实返回值。
+
+    Returns:
+        JSON 字符串，成功时包含：
+        - ok: true
+        - send_token: 本次使用的令牌
+        - file_count: 发送的文件数量
+        - results: 每个文件的发送状态列表，每项包含：
+          - name: 文件名
+          - full_path: 完整路径
+          - status: 发送状态（sent / failed）
+          - message: 状态描述
+
+        失败时返回结构化错误（token 无效或过期）。
+
+    备注：
+    - 禁止跳过 prepare_send 直接调用本工具
+    - 禁止在用户未确认时调用本工具
+    - 禁止编造 send_token
+    """
+    client_id = ctx.client_id if ctx is not None else None
+    return await execute_confirm_send(
+        send_token=send_token,
+        client_id=client_id,
     )
 
 
