@@ -100,6 +100,7 @@ async def execute_prepare_send(
                 full_path=candidate.full_path,
                 size=size,
                 size_display=format_size_display(size),
+                modified=candidate.modified or None,
                 preview_text=preview_text,
                 file_type=file_type,
             )
@@ -126,6 +127,7 @@ async def execute_prepare_send(
                     "full_path": f.full_path,
                     "size": f.size,
                     "size_display": f.size_display,
+                    "modified": f.modified,
                     "file_type": f.file_type,
                     "preview_text": f.preview_text,
                 }

@@ -8,6 +8,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from langchain.agents import create_agent
+from langchain_core.tools import BaseTool
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from adapters.mcp_client import create_mcp_client
 from adapters.model_provider import create_chat_model
@@ -20,6 +22,7 @@ from middleware.tool_call_limit import ToolCallLimitMiddleware
 
 
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "config" / "prompts" / "system_prompt.md"
+INTERNAL_TOOL_NAMES = {"clear_client_state"}
 
 
 def _load_system_prompt() -> str:
@@ -42,20 +45,25 @@ def _build_middleware() -> list:
         middleware.append(DeepSeekReasoningMiddleware(debug=debug))
 
     # 工具调用次数限制
-    middleware.append(ToolCallLimitMiddleware(run_limit=5))
+    middleware.append(ToolCallLimitMiddleware(run_limit=10))
 
     return middleware
 
 
-async def create_weseeker_agent():
+def _filter_agent_tools(tools: list[BaseTool]) -> list[BaseTool]:
+    return [tool for tool in tools if tool.name not in INTERNAL_TOOL_NAMES]
+async def create_weseeker_agent(
+    *,
+    mcp_client: MultiServerMCPClient | None = None,
+    thread_id: str | None = None,
+):
     model = create_chat_model()
-    mcp_client = create_mcp_client()
-    tools = await mcp_client.get_tools()
+    effective_mcp_client = mcp_client or create_mcp_client(thread_id=thread_id)
+    tools = _filter_agent_tools(await effective_mcp_client.get_tools())
     agent = create_agent(
         model=model,
         tools=tools,
         system_prompt=_load_system_prompt(),
         middleware=_build_middleware(),
     )
-    return agent, mcp_client
-
+    return agent, effective_mcp_client

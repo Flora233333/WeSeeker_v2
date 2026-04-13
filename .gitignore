@@ -10,6 +10,8 @@
 !/Weseeker/src/**
 !/Weseeker/scripts/
 !/Weseeker/scripts/**
+!/Weseeker/frontend/
+!/Weseeker/frontend/**
 
 /Weseeker/.env
 /Weseeker/tests/

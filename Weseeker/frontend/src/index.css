@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body { background: theme('colors.bg.DEFAULT'); color: theme('colors.ink.DEFAULT'); }
+  body { font-feature-settings: "ss01", "cv11"; }
+}
+
+@layer components {
+  .card { @apply bg-panel border border-line rounded-[14px]; }
+  .chip { @apply inline-flex items-center gap-1.5 text-[11px] px-2 py-[3px] rounded-full border border-line bg-white text-ink-2; }
+  .chip-ok { @apply bg-[#eef5ed] border-[#d6e5d4] text-ok; }
+  .chip-warn { @apply bg-[#fbf3e3] border-[#f0e2bf] text-warn; }
+  .chip-err { @apply bg-[#fbeaea] border-[#f0c8c8] text-err; }
+  .json-block {
+    @apply text-[12.5px] leading-[1.55] text-[#3b3a37] bg-[#fafaf6] border border-line rounded-lg px-3 py-2.5 whitespace-pre-wrap break-words font-mono;
+  }
+  .row-hover:hover { background: #f8f7f1; }
+}
+
+@layer utilities {
+  .scroll-y { scrollbar-width: thin; scrollbar-color: #d8d5cd transparent; }
+  .scroll-y::-webkit-scrollbar { width: 8px; height: 8px; }
+  .scroll-y::-webkit-scrollbar-thumb { background: #d8d5cd; border-radius: 4px; }
+  .scroll-y::-webkit-scrollbar-track { background: transparent; }
+  .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+  @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+  .timeline-line { background: linear-gradient(to bottom, transparent, theme('colors.line.DEFAULT') 8%, theme('colors.line.DEFAULT') 92%, transparent); }
+}

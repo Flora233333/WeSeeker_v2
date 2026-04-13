@@ -40,6 +40,7 @@ class SendFileItem:
     full_path: str
     size: int
     size_display: str
+    modified: str | None
     preview_text: str
     file_type: str
 
@@ -85,4 +86,19 @@ def consume_pending_send(token: str, client_id: str | None) -> PendingSend | Non
             return None
 
         return _pending_sends.pop(token)
+
+
+def clear_pending_sends(client_id: str | None) -> int:
+    """清空当前 client_id 下的所有待发送批次，返回清理数量。"""
+    with _registry_lock:
+        now = datetime.now()
+        _purge_expired_locked(now=now)
+
+        cleared_tokens = [
+            token for token, pending in _pending_sends.items() if pending.client_id == client_id
+        ]
+        for token in cleared_tokens:
+            del _pending_sends[token]
+
+        return len(cleared_tokens)
 

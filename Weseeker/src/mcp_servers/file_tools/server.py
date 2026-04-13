@@ -6,6 +6,7 @@ from datetime import datetime
 from mcp.server.fastmcp import Context, FastMCP
 
 from config.settings import get_settings
+from mcp_servers.file_tools.client_state import clear_client_state as clear_client_state_bucket
 from mcp_servers.file_tools.folder import execute_list_folder_contents
 from mcp_servers.file_tools.reader import execute_read_content
 from mcp_servers.file_tools.search import execute_get_current_candidates, execute_search
@@ -20,6 +21,25 @@ mcp = FastMCP(
     stateless_http=True,
     json_response=True,
 )
+
+THREAD_ID_HEADER = "X-WeSeeker-Thread-Id"
+
+
+def _resolve_client_key(ctx: Context | None) -> str | None:
+    if ctx is None:
+        return None
+
+    request = getattr(ctx.request_context, "request", None)
+    headers = getattr(request, "headers", None)
+    if headers is not None:
+        header_thread_id = headers.get(THREAD_ID_HEADER)
+        if isinstance(header_thread_id, str) and header_thread_id.strip():
+            return header_thread_id.strip()
+
+    client_id = ctx.client_id
+    if isinstance(client_id, str) and client_id.strip():
+        return client_id.strip()
+    return None
 
 
 @mcp.tool()
@@ -104,7 +124,7 @@ async def search_files(
         - 搜索阶段会尽量识别真实目录，并过滤 0 B 的普通文件噪音；
           文件夹不会因为大小显示为 `0 B` 而与空文件混淆
     """
-    client_id = ctx.client_id if ctx is not None else None
+    client_id = _resolve_client_key(ctx)
     return await execute_search(
         keyword=keyword,
         path=path,
@@ -162,7 +182,7 @@ async def get_current_candidates(ctx: Context | None = None) -> str:
     - 当你准备继续使用 `file_index` 时，优先用它确认当前 `candidate_source`
     - `search_files.path` 表示搜索范围；`list_folder_contents.path` 表示最近一次展开的文件夹路径
     """
-    client_id = ctx.client_id if ctx is not None else None
+    client_id = _resolve_client_key(ctx)
     return await execute_get_current_candidates(client_id=client_id)
 
 
@@ -227,7 +247,7 @@ async def list_folder_contents(
     - `list_folder_contents` 的结果会写入独立的 `list_folder_contents` candidates
     - 这些结果与 `search_files` candidates 的 `file_index` 不能混用
     """
-    client_id = ctx.client_id if ctx is not None else None
+    client_id = _resolve_client_key(ctx)
     return await execute_list_folder_contents(
         file_index=file_index,
         max_results=max_results,
@@ -292,7 +312,7 @@ async def read_file_content(
     - 使用 `file_index` 时，`candidate_source` 与 `file_index` 必须匹配
     - 相同数字的 `file_index` 在不同 candidates 来源下可能指向完全不同的文件
     """
-    client_id = ctx.client_id if ctx is not None else None
+    client_id = _resolve_client_key(ctx)
     return await execute_read_content(
         file_index=file_index,
         file_path=file_path,
@@ -350,7 +370,7 @@ async def prepare_send(
     - 受限路径下的文件不允许发送
     - 如果部分文件无效，仍会为有效文件生成 token，同时返回 errors 说明无效原因
     """
-    client_id = ctx.client_id if ctx is not None else None
+    client_id = _resolve_client_key(ctx)
     return await execute_prepare_send(
         file_indices=file_indices,
         client_id=client_id,
@@ -401,10 +421,27 @@ async def confirm_send(
     - 禁止在用户未确认时调用本工具
     - 禁止编造 send_token
     """
-    client_id = ctx.client_id if ctx is not None else None
+    client_id = _resolve_client_key(ctx)
     return await execute_confirm_send(
         send_token=send_token,
         client_id=client_id,
+    )
+
+
+@mcp.tool()
+async def clear_client_state(ctx: Context | None = None) -> str:
+    """内部维护入口：清空当前客户端 bucket 的 candidates 与待发送 token。"""
+    client_id = _resolve_client_key(ctx)
+    result = clear_client_state_bucket(client_id)
+    return json.dumps(
+        {
+            "ok": True,
+            "client_id": result.client_id,
+            "cleared_candidate_source_count": result.cleared_candidate_source_count,
+            "cleared_candidate_item_count": result.cleared_candidate_item_count,
+            "cleared_pending_count": result.cleared_pending_count,
+        },
+        ensure_ascii=False,
     )
 
 
