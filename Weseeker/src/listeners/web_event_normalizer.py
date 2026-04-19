@@ -12,9 +12,14 @@
         yield ev
 """
 from __future__ import annotations
-import json, time, uuid
+
+import json
+import time
 from typing import Any, Iterator
+
 from langchain_core.messages import AIMessageChunk, ToolMessage
+
+INTERNAL_PREVIEW_SUMMARY_TAG = "internal_preview_summary"
 
 
 def _now_ms() -> int:
@@ -55,6 +60,8 @@ class WebEventNormalizer:
     # ----- messages 模式：token 流 -----
     def _on_messages(self, data: Any) -> Iterator[dict]:
         token, metadata = data  # (BaseMessageChunk, dict)
+        if _is_internal_preview_summary(metadata):
+            return
         node = (metadata or {}).get("langgraph_node")
 
         # ToolMessage 出现 → 工具结果
@@ -134,8 +141,10 @@ class WebEventNormalizer:
     def _on_updates(self, data: Any) -> Iterator[dict]:
         if not isinstance(data, dict):
             return
-        for node, payload in data.items():
+        for _node, payload in data.items():
             if not isinstance(payload, dict):
+                continue
+            if _is_internal_preview_summary(payload):
                 continue
             for msg in payload.get("messages", []) or []:
                 if isinstance(msg, ToolMessage):
@@ -300,3 +309,24 @@ class WebEventNormalizer:
         self._cur_msg_id = None
         self._cur_text = ""
         self._cur_reason = ""
+
+
+def _is_internal_preview_summary(metadata: Any) -> bool:
+    if not isinstance(metadata, dict):
+        return False
+    if metadata.get(INTERNAL_PREVIEW_SUMMARY_TAG):
+        return True
+    if metadata.get("run_name") == INTERNAL_PREVIEW_SUMMARY_TAG:
+        return True
+    if metadata.get("name") == INTERNAL_PREVIEW_SUMMARY_TAG:
+        return True
+
+    tags = metadata.get("tags")
+    if isinstance(tags, list) and INTERNAL_PREVIEW_SUMMARY_TAG in tags:
+        return True
+
+    nested_metadata = metadata.get("metadata")
+    if isinstance(nested_metadata, dict) and nested_metadata.get(INTERNAL_PREVIEW_SUMMARY_TAG):
+        return True
+
+    return False

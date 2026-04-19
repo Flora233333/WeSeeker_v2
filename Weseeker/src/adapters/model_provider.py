@@ -7,16 +7,9 @@
 
 from __future__ import annotations
 
-import base64
-from pathlib import Path
-from typing import Sequence
-
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
 
 from config.settings import get_settings
-
-SUMMARY_PROMPT_PATH = Path(__file__).resolve().parents[1] / "config" / "prompts" / "summary_prompt.md"
 
 
 def create_chat_model() -> BaseChatModel:
@@ -31,6 +24,16 @@ def create_chat_model() -> BaseChatModel:
         return _create_deepseek_model()
     else:
         return _create_openai_compatible_model()
+
+
+def create_summary_model() -> BaseChatModel:
+    """创建预览摘要专用模型。
+
+    当前与主对话模型共用同一套 provider/model 配置，但调用链与
+    Agent middleware 解耦，只保留最轻量的直接 `model.invoke(...)` 用法。
+    """
+
+    return create_chat_model()
 
 
 def _create_deepseek_model() -> BaseChatModel:
@@ -73,81 +76,3 @@ def _create_openai_compatible_model() -> BaseChatModel:
         timeout=settings.llm.timeout,
         model_kwargs={"extra_body": extra_body} if extra_body else {},
     )
-
-
-def _load_summary_prompt() -> str:
-    return SUMMARY_PROMPT_PATH.read_text(encoding="utf-8").strip()
-
-
-def _build_summary_system_prompt(*, depth: str, file_name: str, file_type: str) -> str:
-    summary_prompt = _load_summary_prompt()
-    return (
-        f"{summary_prompt}\n\n"
-        f"当前文件名：{file_name}\n"
-        f"当前文件类型：{file_type}\n"
-        f"当前预览深度：{depth}"
-    )
-
-
-def summarize_visual_assets(
-    assets: Sequence[object],
-    *,
-    depth: str,
-    file_name: str,
-    file_type: str,
-) -> str:
-    if not assets:
-        raise ValueError("没有可用于图片预览的图像资产。")
-
-    model = create_chat_model()
-    content: list[dict[str, object]] = []
-
-    for asset in assets:
-        image_bytes = getattr(asset, "image_bytes", None)
-        mime_type = getattr(asset, "mime_type", "image/png")
-        if not isinstance(image_bytes, (bytes, bytearray)) or not image_bytes:
-            raise ValueError("存在无法用于图片预览的空图像资产。")
-        encoded = base64.b64encode(image_bytes).decode("utf-8")
-        content.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
-            }
-        )
-
-    try:
-        response = model.invoke(
-            [
-                SystemMessage(
-                    content=_build_summary_system_prompt(
-                        depth=depth,
-                        file_name=file_name,
-                        file_type=file_type,
-                    )
-                ),
-                HumanMessage(content=content),
-            ]
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise ValueError(f"视觉摘要调用失败：{exc}") from exc
-
-    text = _coerce_response_text(response.content)
-    if not text:
-        raise ValueError("图片预览模型返回空结果。")
-    return f"由视觉模型查看生成：{text}"
-
-
-def _coerce_response_text(content: object) -> str:
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict):
-                text = item.get("text")
-                if isinstance(text, str) and text.strip():
-                    parts.append(text.strip())
-            elif isinstance(item, str) and item.strip():
-                parts.append(item.strip())
-        return "\n".join(parts).strip()
-    return str(content).strip()

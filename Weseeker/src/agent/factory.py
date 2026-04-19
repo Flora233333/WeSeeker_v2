@@ -18,8 +18,8 @@ from middleware.message_normalizer import (
     DeepSeekReasoningMiddleware,
     ToolContentNormalizerMiddleware,
 )
+from middleware.preview_summary import PreviewSummaryMiddleware
 from middleware.tool_call_limit import ToolCallLimitMiddleware
-
 
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "config" / "prompts" / "system_prompt.md"
 INTERNAL_TOOL_NAMES = {"clear_client_state"}
@@ -39,6 +39,9 @@ def _build_middleware() -> list:
 
     # 通用：ToolMessage list content → str（所有模型都需要）
     middleware.append(ToolContentNormalizerMiddleware(debug=False))
+
+    # read_file_content 工具返回后，在 Agent 侧生成 summary 并永久替换结果
+    middleware.append(PreviewSummaryMiddleware())
 
     # DeepSeek 专用：reasoning_content 管理
     if provider == "deepseek":

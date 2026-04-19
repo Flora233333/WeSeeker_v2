@@ -9,7 +9,6 @@ from mcp_servers.file_tools.utils.candidate_registry import (
     normalize_candidate_source,
 )
 from mcp_servers.file_tools.utils.file_extractors import (
-    PreviewGenerationError,
     StructuredPreviewError,
     UnsupportedFileTypeError,
     extract_preview,
@@ -76,14 +75,6 @@ async def execute_read_content(
             str(exc),
             user_hint="当前文件类型暂不支持预览。",
             operator_hint="如需支持该格式，请在 file_extractors.py 中补对应 extractor。",
-        )
-    except PreviewGenerationError as exc:
-        return build_error_response(
-            "preview_failed",
-            f"生成预览失败：{exc}",
-            retryable=True,
-            user_hint="当前文件暂时无法生成预览，请稍后重试。",
-            operator_hint="请检查图片预览模型或视觉资产生成逻辑。",
         )
     except OSError as exc:
         return build_error_response(

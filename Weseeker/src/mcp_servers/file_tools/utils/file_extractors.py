@@ -11,11 +11,8 @@ from openpyxl import load_workbook
 from PIL import Image
 from pptx import Presentation
 
-from adapters.model_provider import summarize_visual_assets
 from config.settings import get_settings
-from loguru import logger
 from mcp_servers.file_tools.utils.time_format import format_modified_timestamp
-
 
 TEXT_FILE_SUFFIXES = {
     ".csv",
@@ -30,21 +27,9 @@ TEXT_FILE_SUFFIXES = {
 IMAGE_FILE_SUFFIXES = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"}
 SUPPORTED_DEPTHS = {"L1", "L2", "L3"}
 BLANK_IMAGE_TOLERANCE = 2
-MIME_TYPE_BY_SUFFIX = {
-    ".bmp": "image/bmp",
-    ".gif": "image/gif",
-    ".jpeg": "image/jpeg",
-    ".jpg": "image/jpeg",
-    ".png": "image/png",
-    ".webp": "image/webp",
-}
 
 
 class UnsupportedFileTypeError(ValueError):
-    pass
-
-
-class PreviewGenerationError(RuntimeError):
     pass
 
 
@@ -74,34 +59,7 @@ class FilePreview:
 
 
 @dataclass(frozen=True)
-class VisualAsset:
-    source_kind: str
-    label: str
-    mime_type: str
-    image_bytes: bytes
-    width: int
-    height: int
-    page_number: int | None = None
-
-
-@dataclass(frozen=True)
-class VisualPreviewRequest:
-    file_name: str
-    file_type: str
-    depth: str
-    assets: tuple[VisualAsset, ...]
-
-
-@dataclass(frozen=True)
-class VisualPreviewResult:
-    preview_text: str
-    metadata: dict[str, object]
-    fallback_used: bool = False
-
-
-@dataclass(frozen=True)
-class PdfVisualAssets:
-    assets: tuple[VisualAsset, ...]
+class PdfVisualSource:
     metadata: dict[str, object]
 
 
@@ -285,43 +243,33 @@ def _extract_pptx_preview(file_path: Path, depth: str) -> FilePreview:
 
 
 def _extract_pdf_preview(file_path: Path, depth: str) -> FilePreview:
-    if not _is_multimodal_enabled():
-        return _build_pdf_text_preview_result(
-            file_path,
-            depth,
-            preview_mode="pdf_text_preview",
-            fallback_reason="vision_disabled_by_config",
-            notice="当前模型未启用多模态预览，以下返回 PDF 文本预览。",
-        )
-
+    is_multimodal = _is_multimodal_enabled()
     try:
-        pdf_assets = _render_pdf_pages_to_visual_assets(file_path, depth)
+        pdf_source = _collect_pdf_visual_source(file_path, depth)
     except StructuredPreviewError:
         raise
     except Exception as exc:
-        return _build_pdf_text_fallback(file_path, depth, exc)
-
-    try:
-        result = _generate_visual_preview(
-            VisualPreviewRequest(
-                file_name=file_path.name,
-                file_type="pdf",
-                depth=depth,
-                assets=pdf_assets.assets,
-            )
+        return _build_pdf_text_preview_result(
+            file_path,
+            depth,
+            preview_mode="pdf_text_source",
+            fallback_reason="vision_disabled_by_config" if not is_multimodal else str(exc),
         )
-    except Exception as exc:
-        return _build_pdf_text_fallback(file_path, depth, exc, pdf_assets.metadata)
 
-    metadata = dict(pdf_assets.metadata)
-    metadata.update(result.metadata)
-    return _build_file_preview_from_visual_result(
-        file_path,
-        file_type="pdf",
-        preview_mode="pdf_rendered_image_summary",
-        result=result,
-        extra_metadata=metadata,
-    )
+    if not is_multimodal:
+        return _build_pdf_text_preview_result(
+            file_path,
+            depth,
+            preview_mode="pdf_text_source",
+            fallback_reason="vision_disabled_by_config",
+            base_metadata=pdf_source.metadata,
+        )
+
+    preview = _extract_pdf_text_preview(file_path, depth)
+    metadata = dict(preview.metadata)
+    metadata.update(pdf_source.metadata)
+    metadata["preview_mode"] = "pdf_visual_source"
+    return FilePreview(file_type="pdf", preview_text=preview.preview_text, metadata=metadata)
 
 
 def _extract_pdf_text_preview(file_path: Path, depth: str) -> FilePreview:
@@ -349,72 +297,48 @@ def _extract_pdf_text_preview(file_path: Path, depth: str) -> FilePreview:
 
 
 def _extract_image_preview(file_path: Path, depth: str) -> FilePreview:
+    del depth
     file_type = file_path.suffix.lower().lstrip(".")
-    asset, base_metadata = _build_visual_asset_from_image_file(file_path)
+    base_metadata = _build_image_metadata(file_path)
+    is_multimodal = _is_multimodal_enabled()
 
-    if not _is_multimodal_enabled():
+    if is_multimodal:
         return _build_image_metadata_preview(
             file_path,
             file_type=file_type,
             base_metadata=base_metadata,
-            preview_mode="image_metadata_fallback",
-            fallback_reason="vision_disabled_by_config",
-            notice="当前模型未启用多模态预览。",
+            preview_mode="image_visual_source",
+            fallback_reason=None,
+            notice=None,
         )
 
-    try:
-        result = _generate_visual_preview(
-            VisualPreviewRequest(
-                file_name=file_path.name,
-                file_type=file_type,
-                depth=depth,
-                assets=(asset,),
-            )
-        )
-    except Exception as exc:
-        logger.error(f"图片预览失败: {exc}")
-        return _build_image_metadata_preview(
-            file_path,
-            file_type=file_type,
-            base_metadata=base_metadata,
-            preview_mode="image_metadata_fallback",
-            fallback_reason=str(exc),
-            notice="视觉模型查看失败，以下返回基础信息。",
-        )
-
-    return _build_file_preview_from_visual_result(
+    return _build_image_metadata_preview(
         file_path,
         file_type=file_type,
-        preview_mode="image_visual_summary",
-        result=result,
-        extra_metadata=base_metadata,
+        base_metadata=base_metadata,
+        preview_mode="image_metadata_source",
+        fallback_reason="vision_disabled_by_config",
+        notice="当前模型未启用多模态预览。",
     )
 
 
-def _build_visual_asset_from_image_file(file_path: Path) -> tuple[VisualAsset, dict[str, object]]:
+def _build_image_metadata(file_path: Path) -> dict[str, object]:
     with Image.open(file_path) as image:
         image.load()
-        metadata = {
+        return {
             "format": image.format or file_path.suffix.lower().lstrip("."),
             "width": image.width,
             "height": image.height,
             "mode": image.mode,
         }
-        asset = _image_to_visual_asset(
-            image,
-            source_kind="image_file",
-            label=file_path.name,
-            mime_type=MIME_TYPE_BY_SUFFIX.get(file_path.suffix.lower(), "image/png"),
-        )
-    return asset, metadata
 
 
-def _render_pdf_pages_to_visual_assets(file_path: Path, depth: str) -> PdfVisualAssets:
+def _collect_pdf_visual_source(file_path: Path, depth: str) -> PdfVisualSource:
     document = _open_pdf_document(file_path)
     try:
         page_limit = min(document.page_count, _pdf_page_limit(depth))
         render_scale = get_settings().preview.pdf_render_scale
-        assets: list[VisualAsset] = []
+        rendered_pages = 0
         blank_pages: list[int] = []
 
         for page_index in range(page_limit):
@@ -437,20 +361,11 @@ def _render_pdf_pages_to_visual_assets(file_path: Path, depth: str) -> PdfVisual
                     operator_hint="pixmap.tobytes('png') 返回空字节。",
                 )
 
-            with Image.open(BytesIO(image_bytes)) as image:
-                image.load()
-                asset = _image_to_visual_asset(
-                    image,
-                    source_kind="pdf_page",
-                    label=f"page_{page_index + 1}",
-                    mime_type="image/png",
-                    page_number=page_index + 1,
-                )
-            assets.append(asset)
-            if _is_effectively_blank_image(asset.image_bytes):
+            rendered_pages += 1
+            if _is_effectively_blank_image(image_bytes):
                 blank_pages.append(page_index + 1)
 
-        if not assets:
+        if rendered_pages == 0:
             raise StructuredPreviewError(
                 "pdf_blank_render",
                 "当前 PDF 页面渲染结果为空，无法生成图片预览。",
@@ -458,7 +373,7 @@ def _render_pdf_pages_to_visual_assets(file_path: Path, depth: str) -> PdfVisual
                 operator_hint="PDF 渲染流程结束后没有生成任何视觉资产。",
             )
 
-        if len(blank_pages) == len(assets):
+        if len(blank_pages) == rendered_pages:
             raise StructuredPreviewError(
                 "pdf_no_visual_content",
                 "当前 PDF 渲染后的页面没有检测到有效视觉内容。",
@@ -466,73 +381,15 @@ def _render_pdf_pages_to_visual_assets(file_path: Path, depth: str) -> PdfVisual
                 operator_hint=f"预览页全部被判定为近似纯黑/纯白：pages={blank_pages}。",
             )
 
-        return PdfVisualAssets(
-            assets=tuple(assets),
+        return PdfVisualSource(
             metadata={
                 "page_count": document.page_count,
-                "preview_pages": len(assets),
+                "preview_pages": rendered_pages,
                 "render_scale": render_scale,
             },
         )
     finally:
         document.close()
-
-
-def _generate_visual_preview(request: VisualPreviewRequest) -> VisualPreviewResult:
-    try:
-        preview_text = summarize_visual_assets(
-            request.assets,
-            depth=request.depth,
-            file_name=request.file_name,
-            file_type=request.file_type,
-        ).strip()
-    except Exception as exc:  # noqa: BLE001
-        raise PreviewGenerationError(str(exc)) from exc
-
-    if not preview_text:
-        raise PreviewGenerationError("图片预览模型返回空结果。")
-
-    return VisualPreviewResult(
-        preview_text=preview_text,
-        metadata={
-            "preview_images": len(request.assets),
-            "preview_engine": "chat_model",
-        },
-    )
-
-
-def _build_file_preview_from_visual_result(
-    file_path: Path,
-    *,
-    file_type: str,
-    preview_mode: str,
-    result: VisualPreviewResult,
-    extra_metadata: dict[str, object] | None = None,
-) -> FilePreview:
-    metadata = dict(extra_metadata or {})
-    metadata.update(result.metadata)
-    metadata["preview_mode"] = preview_mode
-    return FilePreview(
-        file_type=file_type,
-        preview_text=result.preview_text,
-        metadata=_merge_metadata(file_path, metadata),
-    )
-
-
-def _build_pdf_text_fallback(
-    file_path: Path,
-    depth: str,
-    reason: Exception,
-    base_metadata: dict[str, object] | None = None,
-) -> FilePreview:
-    return _build_pdf_text_preview_result(
-        file_path,
-        depth,
-        preview_mode="pdf_text_fallback",
-        fallback_reason=str(reason),
-        notice="视觉模型查看失败，以下返回 PDF 文本预览。",
-        base_metadata=base_metadata,
-    )
 
 
 def _build_pdf_text_preview_result(
@@ -541,7 +398,6 @@ def _build_pdf_text_preview_result(
     *,
     preview_mode: str,
     fallback_reason: str | None = None,
-    notice: str | None = None,
     base_metadata: dict[str, object] | None = None,
 ) -> FilePreview:
     preview = _extract_pdf_text_preview(file_path, depth)
@@ -552,7 +408,7 @@ def _build_pdf_text_preview_result(
         metadata["fallback_reason"] = fallback_reason
     return FilePreview(
         file_type="pdf",
-        preview_text=_prepend_preview_notice(notice, preview.preview_text),
+        preview_text=preview.preview_text,
         metadata=metadata,
     )
 
@@ -583,16 +439,9 @@ def _build_image_metadata_fallback_text(
     image_format = metadata.get("format", "image")
     width = metadata.get("width", "?")
     height = metadata.get("height", "?")
-    prefix = notice or "图片模式预览暂时不可用。"
-    return f"{prefix} 当前返回基础信息：格式 {image_format}，尺寸 {width}x{height}。"
-
-
-def _prepend_preview_notice(notice: str | None, preview_text: str) -> str:
-    if not notice:
-        return preview_text
-    if not preview_text:
-        return notice
-    return f"{notice}\n\n{preview_text}"
+    if notice:
+        return f"{notice} 当前返回基础信息：格式 {image_format}，尺寸 {width}x{height}。"
+    return f"图片基础信息：格式 {image_format}，尺寸 {width}x{height}。"
 
 
 def _open_pdf_document(file_path: Path) -> fitz.Document:
@@ -615,39 +464,6 @@ def _open_pdf_document(file_path: Path) -> fitz.Document:
             operator_hint="fitz 打开 PDF 成功，但 page_count <= 0。",
         )
     return document
-
-
-def _image_to_visual_asset(
-    image: Image.Image,
-    *,
-    source_kind: str,
-    label: str,
-    mime_type: str,
-    page_number: int | None = None,
-) -> VisualAsset:
-    prepared_image = image.copy()
-    prepared_image = _resize_image_for_preview(prepared_image)
-    if prepared_image.mode not in {"RGB", "RGBA"}:
-        prepared_image = prepared_image.convert("RGB")
-
-    buffer = BytesIO()
-    prepared_image.save(buffer, format="PNG")
-    return VisualAsset(
-        source_kind=source_kind,
-        label=label,
-        mime_type=mime_type,
-        image_bytes=buffer.getvalue(),
-        width=prepared_image.width,
-        height=prepared_image.height,
-        page_number=page_number,
-    )
-
-
-def _resize_image_for_preview(image: Image.Image) -> Image.Image:
-    max_edge = max(get_settings().preview.image_max_edge, 1)
-    resized = image.copy()
-    resized.thumbnail((max_edge, max_edge))
-    return resized
 
 
 def _is_effectively_blank_image(image_bytes: bytes) -> bool:
