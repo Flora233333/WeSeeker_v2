@@ -1,11 +1,11 @@
 debug: True
 
 llm:
-  provider: dashscope # dashscope
-  model: moonshotai/Kimi-K2.5 # moonshotai/Kimi-K2.5, ZhipuAI/GLM-5, deepseek-reasoner
+  provider: deepseek # dashscope
+  model: deepseek-reasoner # moonshotai/Kimi-K2.5, ZhipuAI/GLM-5, deepseek-reasoner
   is_multimodal: false
   api_key: ""
-  api_base: "https://api-inference.modelscope.cn/v1" # "https://api.deepseek.com" https://api-inference.modelscope.cn/v1
+  api_base: "https://api.deepseek.com" # "https://api.deepseek.com" https://api-inference.modelscope.cn/v1
   temperature: 0.5
   timeout: 60
   # enable_thinking: "enabled"  # Qwen3 思考模型需要关闭，换其他模型时删除此行
@@ -20,9 +20,9 @@ mcp:
 
 preview:
   text_depth_chars:
-    L1: 2000
-    L2: 5000
-    L3: 8000
+    L1: 4000
+    L2: 8000
+    L3: 12000
   excel_depth_rows:
     L1: 10
     L2: 50
@@ -35,8 +35,8 @@ preview:
 
 paths:
   desktop: "C:/Users/Flora/Desktop"
-  downloads: ""
-  documents: "C:/Users/Flora/Downloads"
+  downloads: "C:/Users/Flora/Downloads"
+  documents: ""
 
 storage:
   sqlite_path: storage/weseeker.db
