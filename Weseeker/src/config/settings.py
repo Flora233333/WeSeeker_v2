@@ -4,7 +4,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict, YamlConfigSettingsSource
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -64,12 +64,46 @@ class StorageSettings(BaseSettings):
     sqlite_path: str = "storage/weseeker.db"
 
 
+class KBConfig(BaseModel):
+    name: str
+    root: str
+    include_ext: list[str] = Field(
+        default_factory=lambda: [".md", ".docx", ".pdf", ".xlsx", ".txt"]
+    )
+    exclude_glob: list[str] = Field(
+        default_factory=lambda: [
+            "**/.git/**",
+            "**/node_modules/**",
+            "**/__pycache__/**",
+            "**/dist/**",
+            "**/.vite/**",
+            "**/.venv/**",
+            "**/.idea/**",
+        ]
+    )
+    description: str = ""
+
+
 class RAGSettings(BaseSettings):
     enabled: bool = False
     chroma_persist_dir: str = "storage/chroma"
+    docstore_dir: str = "storage/docstore"
+    manifest_dir: str = "storage/manifest"
     embedding_provider: str = "lmstudio"
     embedding_model: str = ""
     embedding_dimension: int = 1024
+    embedding_batch_size: int = 8
+    embedding_max_retries: int = 3
+    lmstudio_embedding_base_url: str = "http://127.0.0.1:1234/v1"
+    parent_chunk_size: int = 2000
+    parent_chunk_overlap: int = 200
+    child_chunk_size: int = 400
+    child_chunk_overlap: int = 60
+    semantic_breakpoint_percentile: int = 95
+    semantic_min_chunk_chars: int = 100
+    semantic_max_chunk_chars: int = 800
+    max_file_size_mb: int = 50
+    knowledge_bases: list[KBConfig] = Field(default_factory=list)
     chunk_size: int = 900
     chunk_overlap: int = 150
     top_k: int = 30

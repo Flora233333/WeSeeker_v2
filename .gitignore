@@ -8,6 +8,7 @@
 !/Weseeker/settings.yaml
 !/Weseeker/src/
 !/Weseeker/src/**
+/Weseeker/src/mcp_servers/rag_tools/*.md
 !/Weseeker/scripts/
 !/Weseeker/scripts/**
 !/Weseeker/frontend/

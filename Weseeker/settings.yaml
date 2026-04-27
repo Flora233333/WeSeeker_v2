@@ -44,9 +44,23 @@ storage:
 rag:
   enabled: false
   chroma_persist_dir: storage/chroma
+  docstore_dir: storage/docstore
+  manifest_dir: storage/manifest
   embedding_provider: lmstudio
-  embedding_model: ""
+  embedding_model: text-embedding-qwen3-embedding-0.6b
   embedding_dimension: 1024
+  embedding_batch_size: 8
+  embedding_max_retries: 3
+  lmstudio_embedding_base_url: http://100.65.78.10:1234/v1
+  parent_chunk_size: 2000
+  parent_chunk_overlap: 200
+  child_chunk_size: 400
+  child_chunk_overlap: 60
+  semantic_breakpoint_percentile: 95
+  semantic_min_chunk_chars: 100
+  semantic_max_chunk_chars: 800
+  max_file_size_mb: 50
+  knowledge_bases: []
   chunk_size: 900
   chunk_overlap: 150
   top_k: 30
