@@ -12,12 +12,69 @@ jieba.setLogLevel(logging.WARNING)
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_\u4e00-\u9fff]+")
 _SHORT_QUERY_MAX_TOKENS = 3
 _SHORT_QUERY_BM25_PARENT_MIN_SCORE = 2.0
+_STOP_TOKENS = {
+    "一个",
+    "一些",
+    "不会",
+    "之前",
+    "知识库",
+    "什么",
+    "以及",
+    "但是",
+    "关于",
+    "比如",
+    "如果",
+    "它会",
+    "完全",
+    "就是",
+    "怎么",
+    "想找",
+    "我们",
+    "我想",
+    "我问",
+    "或者",
+    "是否",
+    "有没有",
+    "没有",
+    "这些",
+    "那个",
+    "那篇",
+    "那段",
+    "里面",
+    "问题",
+    "哪里",
+    "哪些",
+    "返回",
+    "东西",
+    "总结",
+    "写到",
+    "提到",
+    "我",
+    "问",
+    "里",
+    "的",
+    "了",
+    "和",
+    "或",
+    "与",
+    "及",
+    "在",
+    "到",
+    "有",
+    "写",
+    "找",
+    "想",
+    "过",
+    "上",
+    "下",
+}
 
 
 @dataclass(frozen=True)
 class QueryProfile:
     query: str
     tokens: tuple[str, ...]
+    content_tokens: tuple[str, ...]
     is_short: bool
 
 
@@ -36,9 +93,11 @@ def analyze_query(query: str) -> QueryProfile:
     if not normalized_query:
         raise ValueError("query 不能为空。")
     tokens = tuple(_tokenize(normalized_query))
+    content_tokens = tuple(_content_tokens(tokens))
     return QueryProfile(
         query=normalized_query,
         tokens=tokens,
+        content_tokens=content_tokens,
         is_short=0 < len(tokens) <= _SHORT_QUERY_MAX_TOKENS,
     )
 
@@ -74,7 +133,7 @@ def thresholds_for_query(
 
 
 def has_query_token_overlap(query: str, document: Document) -> bool:
-    tokens = analyze_query(query).tokens
+    tokens = analyze_query(query).content_tokens
     if not tokens:
         return False
     haystack = _document_search_text(document)
@@ -99,3 +158,15 @@ def _tokenize(text: str) -> list[str]:
             if stripped:
                 tokens.append(stripped)
     return tokens
+
+
+def _content_tokens(tokens: tuple[str, ...]) -> list[str]:
+    content_tokens: list[str] = []
+    for token in tokens:
+        if token in _STOP_TOKENS:
+            continue
+        # BM25 overlap should be driven by discriminative terms, not one-character particles.
+        if len(token) < 2 and not token.isascii():
+            continue
+        content_tokens.append(token)
+    return content_tokens

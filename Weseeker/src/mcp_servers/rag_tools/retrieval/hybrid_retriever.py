@@ -5,7 +5,6 @@ from typing import Protocol
 from langchain_core.documents import Document
 
 from mcp_servers.rag_tools.retrieval.query_profile import (
-    analyze_query,
     has_query_token_overlap,
     thresholds_for_query,
 )
@@ -89,7 +88,7 @@ class HybridRetriever:
             top_k=candidate_k,
             min_score=bm25_min_score,
         )
-        if self._query_aware_thresholds and analyze_query(normalized_query).is_short:
+        if self._query_aware_thresholds:
             bm25_documents = [
                 document
                 for document in bm25_documents
