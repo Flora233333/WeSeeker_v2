@@ -9,8 +9,16 @@ from langchain_core.documents import Document
 from config.settings import KBConfig, RAGSettings
 from mcp_servers.rag_tools.adapters import BatchedEmbedder, create_embedding_model
 from mcp_servers.rag_tools.indexing.enhancer import enhance_documents
+from mcp_servers.rag_tools.indexing.llm_enhancement_cache import load_cache
+from mcp_servers.rag_tools.indexing.llm_enhancer import (
+    _build_llm_enhanced_embedding_text,
+    build_initial_llm_enhancement_stats,
+    enhance_file_chunks_with_llm,
+    merge_llm_enhancement_stats,
+)
 from mcp_servers.rag_tools.indexing.loaders import load_file_documents
 from mcp_servers.rag_tools.indexing.persist import (
+    BM25Store,
     ChromaChildStore,
     ParentDocStore,
     load_manifest,
@@ -36,8 +44,10 @@ class IndexBuildResult:
     embedding_dimension: int
     chroma_path: str
     docstore_path: str
+    bm25_path: str
     manifest_path: str
     elapsed_ms: int
+    llm_enhancement_stats: dict[str, object]
 
 
 def build_kb_index(kb_config: KBConfig, settings: RAGSettings) -> IndexBuildResult:
@@ -59,6 +69,12 @@ def build_kb_index(kb_config: KBConfig, settings: RAGSettings) -> IndexBuildResu
     parent_documents: list[Document] = []
     child_documents: list[Document] = []
     file_manifest: dict[str, dict[str, object]] = {}
+    llm_enhancement_stats = build_initial_llm_enhancement_stats(settings)
+    llm_cache = (
+        load_cache(settings.llm_enhancement.cache_dir, kb_config.name)
+        if settings.llm_enhancement.enabled and settings.llm_enhancement.cache_enabled
+        else None
+    )
 
     for file_record in scan_result.files:
         loaded_documents = load_file_documents(file_record)
@@ -72,6 +88,21 @@ def build_kb_index(kb_config: KBConfig, settings: RAGSettings) -> IndexBuildResu
             embeddings=embedding_model,
             settings=settings,
         )
+        if settings.llm_enhancement.enabled:
+            llm_result = enhance_file_chunks_with_llm(
+                file_record,
+                file_parents,
+                file_children,
+                settings=settings,
+                kb_name=kb_config.name,
+                cache_records=llm_cache,
+            )
+            file_parents = llm_result.parent_documents
+            file_children = llm_result.child_documents
+            llm_enhancement_stats = merge_llm_enhancement_stats(
+                llm_enhancement_stats,
+                llm_result.stats,
+            )
         parent_documents.extend(file_parents)
         child_documents.extend(file_children)
         file_manifest[file_record.path_str] = _build_file_manifest_record(
@@ -94,6 +125,9 @@ def build_kb_index(kb_config: KBConfig, settings: RAGSettings) -> IndexBuildResu
     doc_store = ParentDocStore(settings.docstore_dir, kb_config.name)
     doc_store.rebuild(parent_documents)
 
+    bm25_store = BM25Store(settings.bm25_dir, kb_config.name)
+    bm25_store.rebuild(child_documents)
+
     manifest_payload = {
         "kb_name": kb_config.name,
         "root": kb_config.root,
@@ -107,6 +141,13 @@ def build_kb_index(kb_config: KBConfig, settings: RAGSettings) -> IndexBuildResu
             "parents_total": len(parent_documents),
             "children_total": len(child_documents),
         },
+        "bm25": {
+            "path": bm25_store.persist_path,
+            "corpus_count": len(child_documents),
+            "tokenizer": "jieba",
+            "index_text": "heading_path + child_content",
+        },
+        "llm_enhancement": llm_enhancement_stats,
     }
     manifest_path = write_manifest(settings.manifest_dir, kb_config.name, manifest_payload)
     elapsed_ms = int((time.perf_counter() - started_at) * 1000)
@@ -120,8 +161,10 @@ def build_kb_index(kb_config: KBConfig, settings: RAGSettings) -> IndexBuildResu
         embedding_dimension=embed_result.dimension,
         chroma_path=chroma_store.persist_path,
         docstore_path=doc_store.db_path,
+        bm25_path=bm25_store.persist_path,
         manifest_path=manifest_path,
         elapsed_ms=elapsed_ms,
+        llm_enhancement_stats=llm_enhancement_stats,
     )
 
 
@@ -144,24 +187,37 @@ def _build_embedder_signature(settings: RAGSettings, dimension: int) -> str:
 
 
 def _build_child_embedding_text(document: Document) -> str:
+    if document.metadata.get("llm_enhancement_model"):
+        llm_text = _build_llm_enhanced_embedding_text(document)
+        heading_prefix = _build_markdown_heading_embedding_prefix(document)
+        if heading_prefix:
+            return f"{heading_prefix}\n\n{llm_text}"
+        return llm_text
+
+    heading_prefix = _build_markdown_heading_embedding_prefix(document)
+    if not heading_prefix:
+        return document.page_content
+    return f"{heading_prefix}\n\n{document.page_content}"
+
+
+def _build_markdown_heading_embedding_prefix(document: Document) -> str:
     text = document.page_content
     metadata = document.metadata
     if str(metadata.get("doc_type") or "") != "md":
-        return text
-
+        return ""
     heading_path = str(metadata.get("heading_path") or "").strip()
     if not heading_path:
-        return text
+        return ""
 
     missing_segments = _find_missing_heading_segments(text, heading_path)
     if not missing_segments:
-        return text
+        return ""
 
     # 只给 embedding 输入补充缺失的 Markdown 标题上下文，不改实际存储的 child 文本。
     prefix = _trim_heading_prefix(" / ".join(missing_segments))
     if not prefix:
-        return text
-    return f"章节：{prefix}\n\n{text}"
+        return ""
+    return f"章节：{prefix}"
 
 
 def _find_missing_heading_segments(text: str, heading_path: str) -> list[str]:

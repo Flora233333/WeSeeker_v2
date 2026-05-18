@@ -84,10 +84,27 @@ class KBConfig(BaseModel):
     description: str = ""
 
 
+class RAGLLMEnhancementSettings(BaseModel):
+    enabled: bool = False
+    provider: str = "deepseek"
+    model: str = "deepseek-v4-flash"
+    base_url: str = "https://api.deepseek.com"
+    api_key_env: str = "DEEPSEEK_API_KEY"
+    thinking_enabled: bool = False
+    reasoning_effort: str = "high"
+    max_retries: int = 2
+    max_file_chars: int = 120000
+    prompt_version: str = "llm_enhancer_v3"
+    cache_enabled: bool = True
+    cache_dir: str = "storage/rag_llm_enhancement_cache"
+    mode: str = "strict"
+
+
 class RAGSettings(BaseSettings):
     enabled: bool = False
     chroma_persist_dir: str = "storage/chroma"
     docstore_dir: str = "storage/docstore"
+    bm25_dir: str = "storage/bm25"
     manifest_dir: str = "storage/manifest"
     embedding_provider: str = "lmstudio"
     embedding_model: str = ""
@@ -104,6 +121,9 @@ class RAGSettings(BaseSettings):
     semantic_max_chunk_chars: int = 800
     max_file_size_mb: int = 50
     knowledge_bases: list[KBConfig] = Field(default_factory=list)
+    llm_enhancement: RAGLLMEnhancementSettings = Field(
+        default_factory=RAGLLMEnhancementSettings
+    )
     chunk_size: int = 900
     chunk_overlap: int = 150
     top_k: int = 30

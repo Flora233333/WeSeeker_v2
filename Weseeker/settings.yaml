@@ -45,6 +45,7 @@ rag:
   enabled: false
   chroma_persist_dir: storage/chroma
   docstore_dir: storage/docstore
+  bm25_dir: storage/bm25
   manifest_dir: storage/manifest
   embedding_provider: lmstudio
   embedding_model: text-embedding-qwen3-embedding-0.6b
@@ -61,6 +62,20 @@ rag:
   semantic_max_chunk_chars: 800
   max_file_size_mb: 50
   knowledge_bases: []
+  llm_enhancement:
+    enabled: false
+    provider: deepseek
+    model: deepseek-v4-flash
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+    thinking_enabled: false
+    reasoning_effort: high
+    max_retries: 2
+    max_file_chars: 120000
+    prompt_version: llm_enhancer_v3
+    cache_enabled: true
+    cache_dir: storage/rag_llm_enhancement_cache
+    mode: strict
   chunk_size: 900
   chunk_overlap: 150
   top_k: 30

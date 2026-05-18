@@ -8,9 +8,11 @@ from pathlib import Path
 from config.settings import KBConfig, get_settings
 from mcp_servers.rag_tools.adapters import BatchedEmbedder, create_embedding_model
 from mcp_servers.rag_tools.indexing.indexer import IndexBuildResult, build_kb_index
+from mcp_servers.rag_tools.indexing.persist.bm25_store import BM25Store
 from mcp_servers.rag_tools.indexing.persist.chroma_store import ChromaChildStore
 from mcp_servers.rag_tools.indexing.persist.doc_store import ParentDocStore
 from mcp_servers.rag_tools.indexing.scanner import ScanResult
+from mcp_servers.rag_tools.retrieval.bm25_retriever import BM25Retriever
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 
@@ -42,23 +44,38 @@ def main() -> None:
     )
     chroma_store = ChromaChildStore(settings.rag.chroma_persist_dir, kb_config.name)
     doc_store = ParentDocStore(settings.rag.docstore_dir, kb_config.name)
+    bm25_retriever = BM25Retriever(BM25Store(settings.rag.bm25_dir, kb_config.name))
 
     report_path = output_root / f"chunk_report_{kb_config.name}.md"
     dump_path = output_root / f"chunk_dump_{kb_config.name}.jsonl"
     evaluation_path = output_root / f"chunk_evaluation_{kb_config.name}.md"
 
     queries = args.query or _default_queries_for_kb(kb_root)
-    write_chunk_report(report_path, result, chroma_store, doc_store, embedder, queries)
+    bm25_queries = args.query or _default_bm25_queries_for_kb(kb_root)
+    write_chunk_report(
+        report_path,
+        result,
+        chroma_store,
+        doc_store,
+        embedder,
+        queries,
+        bm25_retriever,
+        bm25_queries,
+    )
     write_chunk_dump(dump_path, result)
     write_evaluation_report(evaluation_path, result, kb_root)
 
     print("Scan summary:")
     for line in _build_scan_summary_lines(result.scan_result):
         print(line)
+    print("LLM enhancement summary:")
+    for line in _build_llm_enhancement_summary_lines(result.llm_enhancement_stats):
+        print(line)
     print("")
     print(f"KB root: {kb_root}")
     print(f"Chroma path: {result.chroma_path}")
     print(f"DocStore path: {result.docstore_path}")
+    print(f"BM25 path: {result.bm25_path}")
     print(f"Manifest path: {result.manifest_path}")
     print(f"Chunk report: {report_path}")
     print(f"Chunk dump: {dump_path}")
@@ -72,6 +89,8 @@ def write_chunk_report(
     doc_store: ParentDocStore,
     embedder: BatchedEmbedder,
     queries: list[str],
+    bm25_retriever: BM25Retriever,
+    bm25_queries: list[str],
 ) -> None:
     parents_by_file: dict[str, list[object]] = defaultdict(list)
     children_by_parent: dict[str, list[object]] = defaultdict(list)
@@ -92,6 +111,15 @@ def write_chunk_report(
         "Embedding batches：{batches} | Embedding dimension：{dimension}".format(
             batches=result.embedding_batches,
             dimension=result.embedding_dimension,
+        ),
+        (
+            "LLM enhancement：{enabled} | model：{model} | "
+            "api_calls：{api_calls} | cache_hits：{cache_hits}"
+        ).format(
+            enabled=result.llm_enhancement_stats.get("enabled"),
+            model=result.llm_enhancement_stats.get("model"),
+            api_calls=result.llm_enhancement_stats.get("api_calls"),
+            cache_hits=result.llm_enhancement_stats.get("cache_hits"),
         ),
         f"总耗时：{result.elapsed_ms} ms",
         "",
@@ -143,6 +171,10 @@ def write_chunk_report(
     for query in queries:
         lines.extend(_build_query_report(query, chroma_store, doc_store, embedder))
 
+    lines.extend(["---", "", "## BM25 检索测试", ""])
+    for query in bm25_queries:
+        lines.extend(_build_bm25_query_report(query, bm25_retriever))
+
     report_path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -183,6 +215,35 @@ def _build_query_report(
     return lines
 
 
+def _build_bm25_query_report(
+    query: str,
+    bm25_retriever: BM25Retriever,
+) -> list[str]:
+    results = bm25_retriever.search(query, top_k=5)
+    lines = [
+        f"### Query: \"{query}\"",
+        "| Rank | 文件 | heading_path | BM25 分数 | Child 前 120 字 |",
+        "|---|---|---|---|---|",
+    ]
+    if not results:
+        lines.extend(["| - | 无命中 | - | - | - |", ""])
+        return lines
+
+    for index, document in enumerate(results, start=1):
+        metadata = document.metadata
+        lines.append(
+            "| {rank} | {file_name} | {heading_path} | {score:.4f} | {preview} |".format(
+                rank=index,
+                file_name=_escape_table(str(metadata.get("file_name", ""))),
+                heading_path=_escape_table(str(metadata.get("heading_path", ""))),
+                score=float(metadata.get("bm25_score") or 0.0),
+                preview=_escape_table(_preview(document.page_content, 120)),
+            )
+        )
+    lines.append("")
+    return lines
+
+
 def write_chunk_dump(path: Path, result: IndexBuildResult) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for document in [*result.parent_documents, *result.child_documents]:
@@ -198,6 +259,20 @@ def write_chunk_dump(path: Path, result: IndexBuildResult) -> None:
                 "page_number": document.metadata.get("page_number"),
                 "sheet_name": document.metadata.get("sheet_name"),
                 "char_count": document.metadata.get("char_count"),
+                "llm_parent_title": document.metadata.get("llm_parent_title"),
+                "llm_parent_summary": document.metadata.get("llm_parent_summary"),
+                "llm_parent_keywords_text": document.metadata.get(
+                    "llm_parent_keywords_text"
+                ),
+                "llm_child_topic": document.metadata.get("llm_child_topic"),
+                "llm_child_summary": document.metadata.get("llm_child_summary"),
+                "llm_keywords_text": document.metadata.get("llm_keywords_text"),
+                "llm_entities_text": document.metadata.get("llm_entities_text"),
+                "llm_aliases_text": document.metadata.get("llm_aliases_text"),
+                "llm_likely_queries_text": document.metadata.get(
+                    "llm_likely_queries_text"
+                ),
+                "llm_chunk_type": document.metadata.get("llm_chunk_type"),
                 "preview": _preview(document.page_content, 300),
             }
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
@@ -255,6 +330,8 @@ def write_evaluation_report(path: Path, result: IndexBuildResult, kb_root: Path)
         "",
         *_build_scan_summary_lines(result.scan_result),
         "",
+        *_build_llm_enhancement_summary_lines(result.llm_enhancement_stats),
+        "",
         f"- Parent 平均长度：{_safe_avg(parent_lengths):.1f} chars",
         f"- Child 平均长度：{_safe_avg(child_lengths):.1f} chars",
         f"- 多 Child Parent 数：{len(multi_child_parents)}",
@@ -301,6 +378,18 @@ def _build_scan_summary_lines(scan_result: ScanResult) -> list[str]:
     ]
 
 
+def _build_llm_enhancement_summary_lines(stats: dict[str, object]) -> list[str]:
+    return [
+        f"- llm_enhancement_enabled: {stats.get('enabled', False)}",
+        f"- llm_enhancement_model: {stats.get('model', '')}",
+        f"- llm_enhancement_prompt_version: {stats.get('prompt_version', '')}",
+        f"- llm_enhancement_api_calls: {stats.get('api_calls', 0)}",
+        f"- llm_enhancement_cache_hits: {stats.get('cache_hits', 0)}",
+        f"- llm_enhancement_cache_writes: {stats.get('cache_writes', 0)}",
+        f"- llm_enhancement_enhanced_files: {stats.get('enhanced_files', 0)}",
+    ]
+
+
 def _default_queries_for_kb(kb_root: Path) -> list[str]:
     root_name = kb_root.name.lower()
     if root_name == "test_kb":
@@ -315,6 +404,19 @@ def _default_queries_for_kb(kb_root: Path) -> list[str]:
         "Transformer 的注意力机制怎么计算",
         "哪种方法的显存峰值最低",
     ]
+
+
+def _default_bm25_queries_for_kb(kb_root: Path) -> list[str]:
+    root_name = kb_root.name.lower()
+    if root_name == "test_kb":
+        return [
+            "LangChain 有哪些坑",
+            "DeepSeek reasoning_content",
+            "LangGraph interrupt checkpointer",
+            "风电 4K 6K 分块切片",
+            "只输出 JSON",
+        ]
+    return _default_queries_for_kb(kb_root)
 
 
 def _overall_conclusion(
