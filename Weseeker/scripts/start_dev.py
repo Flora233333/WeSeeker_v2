@@ -1,18 +1,34 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
 FRONTEND_DIR = ROOT_DIR / "frontend"
+DEPENDENCY_TIMEOUT_SECONDS = 2.0
+
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+DEPENDENCY_ERRORS = (
+    OSError,
+    TimeoutError,
+    urllib.error.URLError,
+    urllib.error.HTTPError,
+    json.JSONDecodeError,
+)
 
 
 @dataclass(frozen=True)
@@ -50,6 +66,104 @@ def _resolve_npm_command() -> str:
     if npm_command is None:
         raise FileNotFoundError("未找到 npm，请先安装 Node.js 或确认 npm 已加入 PATH。")
     return npm_command
+
+
+def _request_json(
+    *,
+    url: str,
+    method: str = "GET",
+    payload: dict[str, object] | None = None,
+) -> dict[str, object]:
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    headers = {"Accept": "application/json"}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url=url, data=body, headers=headers, method=method)
+    with urllib.request.urlopen(request, timeout=DEPENDENCY_TIMEOUT_SECONDS) as response:
+        response_body = response.read().decode("utf-8", "replace")
+    parsed = json.loads(response_body)
+    if not isinstance(parsed, dict):
+        raise RuntimeError("response is not a JSON object")
+    return parsed
+
+
+def _check_everything(settings) -> None:
+    url = f"http://{settings.everything.host}:{settings.everything.port}"
+    probe_url = f"{url}/?search=test&json=1&count=1"
+    try:
+        _request_json(url=probe_url)
+    except DEPENDENCY_ERRORS as exc:
+        raise RuntimeError(
+            "Everything HTTP is not reachable. Start Everything and enable its HTTP server "
+            f"at {url}; otherwise search_files will fail. Detail: {exc}"
+        ) from exc
+    print(f"[start_dev] dependency ok: Everything HTTP {url}")
+
+
+def _check_lmstudio_embedding(settings) -> None:
+    base_url = settings.rag.lmstudio_embedding_base_url.rstrip("/")
+    model = settings.rag.embedding_model
+    try:
+        payload = _request_json(
+            url=f"{base_url}/embeddings",
+            method="POST",
+            payload={"model": model, "input": "ping"},
+        )
+    except DEPENDENCY_ERRORS as exc:
+        raise RuntimeError(
+            "LM Studio embedding endpoint is not reachable. Start LM Studio, load the "
+            f"embedding model {model}, and expose {base_url}; otherwise search_kb will fail. "
+            f"Detail: {exc}"
+        ) from exc
+    if "data" not in payload:
+        raise RuntimeError(
+            "LM Studio embedding endpoint responded, but the response does not contain "
+            f"embedding data. Check model={model} at {base_url}."
+        )
+    print(f"[start_dev] dependency ok: LM Studio embeddings {base_url} model={model}")
+
+
+def _is_port_open(port: int) -> bool:
+    for host in ("127.0.0.1", "localhost", "::1"):
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _check_required_ports(settings, *, rag_enabled: bool, frontend_enabled: bool) -> None:
+    ports = {
+        "file_tools": settings.mcp.file_tools_port,
+        "web_api": 8787,
+    }
+    if rag_enabled:
+        ports["rag_tools"] = settings.mcp.rag_tools_port
+    if frontend_enabled:
+        ports["frontend"] = 5173
+
+    occupied = [
+        f"{name}=127.0.0.1:{port}"
+        for name, port in ports.items()
+        if _is_port_open(port)
+    ]
+    if occupied:
+        raise RuntimeError(
+            "Required dev ports are already in use: "
+            + ", ".join(occupied)
+            + ". Stop those processes before running start_dev.py."
+        )
+
+
+def _check_dependencies(*, rag_enabled: bool, frontend_enabled: bool) -> None:
+    from config.settings import get_settings
+
+    settings = get_settings()
+    _check_everything(settings)
+    if rag_enabled and settings.rag.embedding_provider.lower().strip() == "lmstudio":
+        _check_lmstudio_embedding(settings)
+    _check_required_ports(settings, rag_enabled=rag_enabled, frontend_enabled=frontend_enabled)
 
 
 def _stop_processes(processes: list[ManagedProcess]) -> None:
@@ -103,6 +217,7 @@ def main() -> None:
         signal.signal(signal.SIGTERM, handle_stop)
 
     try:
+        _check_dependencies(rag_enabled=rag_enabled, frontend_enabled=not args.no_frontend)
         processes.append(
             _start_process(
                 name="file_tools",
