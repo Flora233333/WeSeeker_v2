@@ -32,6 +32,32 @@ def search_kb(
     top_k: int = 5,
     candidate_k: int = 30,
 ) -> dict[str, object]:
+    """Search an indexed knowledge base and return parent-level evidence.
+
+    Args:
+        query: 用户原始检索问题。当前只会去掉首尾空白，不做 Query Rewrite、HyDE、
+            同义词扩展或 rerank。
+        kb_name: 已完成离线索引的知识库名称。必须显式传入，例如 `test_kb_notes`。
+        top_k: 最终返回的 parent evidence 数量。默认 5；必须大于 0。
+        candidate_k: Vector / BM25 两路各自召回的 child candidate 数量。默认 30；
+            实际执行时会使用 `max(top_k, candidate_k)`，避免候选数小于最终返回数。
+
+    Returns:
+        成功时返回 `ok=true` 的 dict，核心字段包括：
+        - `query_profile`: 原始分词 `tokens`、过滤泛词后的 `content_tokens`，
+          以及是否短 query 的 `is_short`。
+        - `results`: parent-level evidence 列表。每项包含文件信息、章节、`parent_id`、
+          `rank_score`、检索来源、细分分数、parent 摘要和命中的 child 摘要。
+        - `diagnostics`: `top_k`、`candidate_k`、候选数量、实际阈值和耗时。
+
+        失败时返回 `ok=false` 的 dict。参数错误、KB 索引产物缺失、embedding 服务不可用、
+        parent 缺失会用明确 `error_type` 表达，不会伪装成空结果。
+
+    Notes:
+        `rank_score` 是 RRF 排名融合分，只用于排序诊断，不是相似度、置信度或百分制相关性。
+        该函数是内部稳定 API；MCP、Agent 决策、Query Rewrite、HyDE 和 rerank
+        都在外层或后续阶段处理。
+    """
     normalized_query = query.strip()
     normalized_kb_name = kb_name.strip()
     if not normalized_query:
